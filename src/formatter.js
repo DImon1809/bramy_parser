@@ -122,6 +122,7 @@ function formatVK(article) {
 
   return {
     text:      truncate(lines.join('\n'), MAX_VK_TEXT),
+    url:       url       || null,
     imageUrl:  imageUrl  || null,
     imageData: imageData || null,
   };

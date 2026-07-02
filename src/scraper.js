@@ -4,19 +4,22 @@ const config = require('./config');
 
 const BASE = config.scraper.baseUrl;
 
-// Ключевые слова в заголовке — считаем инструкцией (для Магазина)
+// Ключевые слова в заголовке — считаем инструкцией (для Новостей)
 const INSTRUCTION_TITLE_RX = /^(как |виды |способы |подготовка |замер |устройство |конструкция |монтаж|установка |регулировка|полотно |короба |направляющие|механизм|кардан|ленточное|накладной|встроенный|комбинированный|производство|профиля |системы |материалы |схема |подключение|настройка|ремонт|обслуживание|технические характеристики)/i;
+
+// URL-части страниц магазина, которые нужно пропускать
+const SHOP_EXCLUDE_URL_PARTS = ['tehnicheskie-instrukcii', 'sertifikat', 'sertifikaty'];
 
 // Разделы для мониторинга
 const SECTIONS = [
-  { listUrl: `${BASE}/news.html`,    articlePrefix: '/news/',    section: 'Новости', type: 'news',  filterInstructions: false },
-  { listUrl: `${BASE}/action.html`,  articlePrefix: '/action/',  section: 'Акции',   type: 'promo', filterInstructions: false },
-  // Магазин — подкатегории каталога, постим информационные страницы товаров
-  { listUrl: `${BASE}/rolstavni2/`,         articlePrefix: '/rolstavni2/',         section: 'Магазин / Рольставни',          type: 'news', filterInstructions: true },
-  { listUrl: `${BASE}/shlagbaumy2/`,        articlePrefix: '/shlagbaumy2/',        section: 'Магазин / Шлагбаумы',           type: 'news', filterInstructions: true },
-  { listUrl: `${BASE}/vorota-sekcionnye2/`, articlePrefix: '/vorota-sekcionnye2/', section: 'Магазин / Ворота секционные',   type: 'news', filterInstructions: true },
-  { listUrl: `${BASE}/vorota-raspashnye2/`, articlePrefix: '/vorota-raspashnye2/', section: 'Магазин / Ворота распашные',    type: 'news', filterInstructions: true },
-  { listUrl: `${BASE}/vorota-otkatnye2/`,   articlePrefix: '/vorota-otkatnye2/',   section: 'Магазин / Ворота откатные',     type: 'news', filterInstructions: true },
+  { listUrl: `${BASE}/news.html`,   articlePrefix: '/news/',   section: 'Новости', type: 'news',  filterInstructions: false, listType: 'news' },
+  { listUrl: `${BASE}/action.html`, articlePrefix: '/action/', section: 'Акции',   type: 'promo', filterInstructions: false, listType: 'news' },
+  // Магазин — информационные страницы категорий товаров
+  { listUrl: `${BASE}/rolstavni.html`,        articlePrefix: '/rolstavni/',        section: 'Магазин / Рольставни',        type: 'news', listType: 'shop' },
+  { listUrl: `${BASE}/shlagbaumy.html`,        articlePrefix: '/shlagbaumy/',       section: 'Магазин / Шлагбаумы',         type: 'news', listType: 'shop' },
+  { listUrl: `${BASE}/vorota-sekcionnye.html`, articlePrefix: '/vorota-sekcionnye/', section: 'Магазин / Ворота секционные', type: 'news', listType: 'shop' },
+  { listUrl: `${BASE}/vorota-raspashnye.html`, articlePrefix: '/vorota-raspashnye/', section: 'Магазин / Ворота распашные',  type: 'news', listType: 'shop' },
+  { listUrl: `${BASE}/vorota-otkatnye.html`,   articlePrefix: '/vorota-otkatnye/',   section: 'Магазин / Ворота откатные',   type: 'news', listType: 'shop' },
 ];
 
 function parseDate(str = '') {
@@ -32,7 +35,75 @@ function toIsoDate(dateStr) {
   return d ? d.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
 }
 
-// ─── Парсинг списка статей ────────────────────────────────────────────────────
+// ─── Парсинг списка новостей/акций ───────────────────────────────────────────
+
+async function scrapeNewsList(page, section) {
+  return page.evaluate(({ articlePrefix }) => {
+    const items = [];
+    const seen = new Set();
+
+    document.querySelectorAll('.news_prods').forEach(el => {
+      const linkEl = el.querySelector('.prevsText a, a[href*="' + articlePrefix + '"]');
+      const dateEl = el.querySelector('span.date');
+      const imgEl  = el.querySelector('.blocksIMgNews img, img');
+
+      if (!linkEl) return;
+
+      const url = linkEl.href;
+      if (!url.includes(articlePrefix)) return;
+      if (seen.has(url)) return;
+      seen.add(url);
+
+      const title = linkEl.getAttribute('title') || linkEl.textContent.trim();
+      const date  = dateEl?.textContent?.trim() || '';
+      let   img   = imgEl?.src || '';
+
+      img = img.replace('/assets/cache/images/', '/assets/images/')
+               .replace(/\/x-/, '/')
+               .replace(/\.367\.jpg$/, '.jpg')
+               .replace(/\.367\.png$/, '.png');
+
+      items.push({ url, title, date, thumbImg: img });
+    });
+
+    return items;
+  }, { articlePrefix: section.articlePrefix });
+}
+
+// ─── Парсинг списка страниц магазина ─────────────────────────────────────────
+
+async function scrapeShopList(page, section) {
+  return page.evaluate(({ articlePrefix, excludeUrlParts }) => {
+    const items = [];
+    const seen = new Set();
+
+    document.querySelectorAll('a[href]').forEach(a => {
+      const href = a.href || '';
+      const text = a.textContent.trim().replace(/\s+/g, ' ');
+      if (!href.includes(articlePrefix) || !text) return;
+
+      // Только прямые подстраницы категории (/section/page.html, не глубже)
+      try {
+        const path = new URL(href).pathname.replace(/^\//, '');
+        const parts = path.split('/');
+        if (parts.length !== 2) return; // пропускаем /section/sub/page.html
+      } catch (_) { return; }
+
+      if (seen.has(href)) return;
+
+      // Исключаем технические страницы по URL
+      const hrefLower = href.toLowerCase();
+      if (excludeUrlParts.some(p => hrefLower.includes(p))) return;
+
+      seen.add(href);
+      items.push({ url: href, title: text, date: '', thumbImg: '' });
+    });
+
+    return items;
+  }, { articlePrefix: section.articlePrefix, excludeUrlParts: SHOP_EXCLUDE_URL_PARTS });
+}
+
+// ─── Универсальный парсинг списка ─────────────────────────────────────────────
 
 async function scrapeList(page, section) {
   try {
@@ -47,38 +118,10 @@ async function scrapeList(page, section) {
     return [];
   }
 
-  return page.evaluate(({ base, articlePrefix }) => {
-    const items = [];
-    const seen = new Set();
-
-    document.querySelectorAll('.news_prods').forEach(el => {
-      const linkEl  = el.querySelector('.prevsText a, a[href*="' + articlePrefix + '"]');
-      const dateEl  = el.querySelector('span.date');
-      const imgEl   = el.querySelector('.blocksIMgNews img, img');
-
-      if (!linkEl) return;
-
-      const url = linkEl.href;
-      if (!url.includes(articlePrefix)) return;
-      if (seen.has(url)) return;
-      seen.add(url);
-
-      const title = linkEl.getAttribute('title') || linkEl.textContent.trim();
-      const date  = dateEl?.textContent?.trim() || '';
-      let   img   = imgEl?.src || '';
-
-      // Из src миниатюры извлекаем полный путь (убираем размер x- и .367)
-      // /assets/cache/images/our_photo/news/x-slug.367.jpg → /assets/images/our_photo/news/slug.*
-      img = img.replace('/assets/cache/images/', '/assets/images/')
-               .replace(/\/x-/, '/')
-               .replace(/\.367\.jpg$/, '.jpg')
-               .replace(/\.367\.png$/, '.png');
-
-      items.push({ url, title, date, thumbImg: img });
-    });
-
-    return items;
-  }, { base: BASE, articlePrefix: section.articlePrefix });
+  if (section.listType === 'shop') {
+    return scrapeShopList(page, section);
+  }
+  return scrapeNewsList(page, section);
 }
 
 // ─── Парсинг полной статьи ────────────────────────────────────────────────────
@@ -111,12 +154,22 @@ async function scrapeArticle(page, url) {
       text = contentEl.textContent?.replace(/\s+/g, ' ').trim() || '';
     }
 
-    // Первая картинка из /assets/images/our_photo/
-    const imgs = [...document.querySelectorAll('img[src]')]
-      .map(i => i.src)
-      .filter(s => s.includes('/assets/images/our_photo/') || s.includes('/images/our_photo/'));
+    // Ищем первую подходящую картинку контента
+    const allImgs = [...document.querySelectorAll('img[src]')].map(i => i.src);
+    const isContent = s =>
+      (s.includes('/assets/images/our_photo/') || s.includes('/images/our_photo/') ||
+       s.includes('/content/') || s.includes('/img1/')) &&
+      !s.includes('logo') && !s.includes('icon') && !s.includes('basket') &&
+      !s.includes('vk.') && !s.includes('mail.') && !s.includes('facebook') &&
+      !s.includes('/icons') && !s.includes('closelabel');
+    // Приоритет: our_photo > content > img1
+    const imageUrl =
+      allImgs.find(s => (s.includes('/assets/images/our_photo/') || s.includes('/images/our_photo/')) && isContent(s)) ||
+      allImgs.find(s => s.includes('/content/') && isContent(s)) ||
+      allImgs.find(s => s.includes('/img1/') && isContent(s)) ||
+      null;
 
-    return { h1, text, imageUrl: imgs[0] || null };
+    return { h1, text, imageUrl };
   }, { base: BASE });
 
   // Скачиваем картинку через fetch внутри самого браузера —
@@ -157,7 +210,6 @@ function detectCategory(url, title) {
 // ─── Главная функция ──────────────────────────────────────────────────────────
 
 async function getNewArticles(db) {
-  // Первый запуск: база пустая — сохраняем всё как "уже виденное", не публикуем
   const isFirstRun = db.all().length === 0;
 
   const browser = await chromium.launch({
@@ -174,7 +226,7 @@ async function getNewArticles(db) {
   const newArticles = [];
 
   if (isFirstRun) {
-    logger.info('Первый запуск — заполняем базу, публикаций не будет');
+    logger.info('Первый запуск — заполняем базу, переходим в режим мониторинга');
   }
 
   try {
@@ -185,7 +237,8 @@ async function getNewArticles(db) {
       logger.info(`  Найдено в списке: ${listings.length}`);
 
       for (const item of listings) {
-        if (section.filterInstructions && INSTRUCTION_TITLE_RX.test(item.title)) {
+        // Для новостей — фильтруем инструкции по заголовку
+        if (section.listType === 'news' && section.filterInstructions && INSTRUCTION_TITLE_RX.test(item.title)) {
           logger.info(`  Инструкция, пропуск: ${item.title}`);
           continue;
         }
@@ -193,7 +246,6 @@ async function getNewArticles(db) {
         if (db.exists(item.url)) continue;
 
         if (isFirstRun) {
-          // Сохраняем как уже виденную — публиковать не нужно
           db.saveAsSeen({
             url:         item.url,
             title:       item.title,

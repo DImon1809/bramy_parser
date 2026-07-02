@@ -4,11 +4,12 @@ module.exports = {
   tg: {
     botToken: process.env.TG_BOT_TOKEN || '',
     channelId: process.env.TG_CHANNEL_ID || '',
-    adminId: process.env.TG_ADMIN_ID || '',
+    adminIds: (process.env.TG_ADMIN_ID || '').split(',').map(s => s.trim()).filter(Boolean),
   },
   vk: {
-    token: process.env.VK_TOKEN || '',
-    groupId: process.env.VK_GROUP_ID || '',
+    token:     process.env.VK_TOKEN      || '',
+    userToken: process.env.VK_USER_TOKEN || '',
+    groupId:   process.env.VK_GROUP_ID   || '',
   },
   scraper: {
     baseUrl: 'https://www.bramy.ru',

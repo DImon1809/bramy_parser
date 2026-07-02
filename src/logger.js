@@ -29,15 +29,17 @@ const logger = winston.createLogger({
 });
 
 async function notifyAdmin(text) {
-  if (!config.tg.botToken || !config.tg.adminId) return;
-  try {
-    await axios.post(`https://api.telegram.org/bot${config.tg.botToken}/sendMessage`, {
-      chat_id: config.tg.adminId,
-      text:    `Bramy Parser:\n${text}`,
-    });
-  } catch (e) {
-    const detail = e.response?.data?.description || e.message;
-    console.error(`[notifyAdmin] Не удалось отправить уведомление: ${detail}`);
+  if (!config.tg.botToken || !config.tg.adminIds?.length) return;
+  for (const adminId of config.tg.adminIds) {
+    try {
+      await axios.post(`https://api.telegram.org/bot${config.tg.botToken}/sendMessage`, {
+        chat_id: adminId,
+        text:    `Bramy Parser:\n${text}`,
+      });
+    } catch (e) {
+      const detail = e.response?.data?.description || e.message;
+      console.error(`[notifyAdmin] Не удалось отправить уведомление (${adminId}): ${detail}`);
+    }
   }
 }
 

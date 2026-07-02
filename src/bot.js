@@ -7,7 +7,7 @@ const { formatTelegram, formatVK } = require('./formatter');
 const { sendTelegram, sendVK }     = require('./publisher');
 
 const TOKEN   = config.tg.botToken;
-const ADMIN   = String(config.tg.adminId);
+const ADMINS  = new Set(config.tg.adminIds.map(String));
 const BASE    = `https://api.telegram.org/bot${TOKEN}`;
 
 // Состояние парсера — обновляется из main.js
@@ -58,8 +58,7 @@ async function onStatus(chatId, cbId) {
 
   const all       = db.all();
   const total     = all.length;
-  const bothDone  = all.filter(a =>  a.postedTg &&  a.postedVk).length;
-  const partial   = all.filter(a => (a.postedTg ||  a.postedVk) && !(a.postedTg && a.postedVk)).length;
+  const published = all.filter(a => a.postedTg || a.postedVk).length;
   const notPosted = all.filter(a => !a.postedTg && !a.postedVk).length;
 
   let lastRun = 'ещё не запускался';
@@ -72,9 +71,8 @@ async function onStatus(chatId, cbId) {
     '📊 <b>Состояние парсера</b>\n',
     `🕐 Последняя проверка: ${lastRun}`,
     `📚 Статей в базе: ${total}`,
-    `✅ Опубликовано везде: ${bothDone}`,
+    `✅ Опубликовано: ${published}`,
   ];
-  if (partial)   lines.push(`⚠️ Частично опубликовано: ${partial}`);
   if (notPosted) lines.push(`❌ Не опубликовано: ${notPosted}`);
   lines.push('');
   lines.push(isRunning ? '⏳ Парсер сейчас работает...' : '🟢 Парсер активен');
@@ -151,7 +149,7 @@ async function onTestRun(chatId, cbId) {
 async function handleUpdate(update) {
   const chatId = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
   if (!chatId) return;
-  if (String(chatId) !== ADMIN) {
+  if (!ADMINS.has(String(chatId))) {
     if (update.message) {
       await sendMsg(chatId, '⛔ Доступ запрещён. Этот бот предназначен только для администратора.');
     } else if (update.callback_query) {
@@ -179,7 +177,7 @@ async function handleUpdate(update) {
 // ─── Long polling ─────────────────────────────────────────────────────────────
 
 async function startPolling() {
-  if (!TOKEN || !ADMIN) {
+  if (!TOKEN || !ADMINS.size) {
     logger.warn('TG бот: не задан токен или TG_ADMIN_ID — polling не запущен');
     return;
   }
