@@ -30,6 +30,19 @@
 | Магазин / Ворота секционные | /vorota-sekcionnye.html | Товары |
 | Магазин / Ворота распашные | /vorota-raspashnye.html | Товары |
 | Магазин / Ворота откатные | /vorota-otkatnye.html | Товары |
+| Магазин / Солнцезащитные системы | /solncezashhitnye-sistemy.html | Товары |
+| Магазин / Металлоконструкции | /metallokonstrukcii.html | Товары |
+| Магазин / Домофоны | /domofony.html | Товары |
+| Магазин / Видеонаблюдение | /videonablyudenie.html | Товары |
+| Магазин / Радиоуправление | /radioupravlenie.html | Товары |
+| Магазин / Аксессуары | /aksessuary.html | Товары |
+| Магазин / Замки, доводчики | /zamki-dovodchiki.html | Товары |
+| Магазин / Источники питания | /istochniki-pitaniya.html | Товары |
+| Магазин / Межкомнатные двери | /mezhkomnatnye-dveri.html | Товары |
+| Магазин / Парковочные системы | /avtomaticheskie-cepi-i-parkovochnye-sistemy.html | Товары |
+| Магазин / Солнцезащита | /solncezashhita.html | Товары |
+
+Из заголовков каждого раздела отфильтровываются инструкции по монтажу/эксплуатации/обслуживанию — публикуется только продающий контент (виды и назначение товара, бренды и т.д.), см. `INSTRUCTION_TITLE_RX` в `scraper.js`.
 
 ### Режимы работы
 

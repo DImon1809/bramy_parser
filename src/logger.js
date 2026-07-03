@@ -50,4 +50,11 @@ logger.errorNotify = async (message, err) => {
   await notifyAdmin(`🚨 ${full}`);
 };
 
+// Уведомляет администратора о важных, но не ошибочных событиях (например,
+// автообнаружение нового раздела на сайте)
+logger.infoNotify = async (message) => {
+  logger.info(message);
+  await notifyAdmin(`ℹ️ ${message}`);
+};
+
 module.exports = logger;

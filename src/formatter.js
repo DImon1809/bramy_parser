@@ -64,36 +64,44 @@ function vkHashtags(article) {
 function formatTelegram(article) {
   const { title, text, url, section, imageUrl, imageData, articleType, publishedAt } = article;
 
-  const icon    = typeIcon(articleType);
-  const descLimit = imageUrl ? 750 : 2000;
-  const desc    = withParagraphs(text, descLimit);
-  const date    = formatDate(publishedAt);
+  const icon = typeIcon(articleType);
+  const date = formatDate(publishedAt);
   const metaParts = [
     section ? `📂 ${section}` : '',
     date    ? `📅 ${date}`    : '',
   ].filter(Boolean);
   const meta = metaParts.join('  ·  ');
 
-  const body = [
-    `${icon} <b>${title}</b>`,
-    meta ? `\n\n${meta}` : '',
-    desc ? `\n\n${desc}` : '',
-    `\n\n🔗 <a href="${url}">Читать на bramy.ru →</a>`,
-  ].join('');
+  const header = [`${icon} <b>${title}</b>`, meta ? `\n\n${meta}` : ''].join('');
+  const link   = `\n\n🔗 <a href="${url}">Читать на bramy.ru →</a>`;
+
+  // Обрезаем только текст описания, подгоняя его под фактическую длину —
+  // заголовок и ссылку никогда не режем, иначе можно разрезать HTML-тег
+  // пополам и Telegram откажется парсить подпись (было именно так).
+  const maxLen = imageUrl ? MAX_TG_CAPTION : MAX_TG_TEXT;
+  let desc = withParagraphs(text, imageUrl ? 750 : 2000);
+  let body = [header, desc ? `\n\n${desc}` : '', link].join('');
+
+  if (body.length > maxLen) {
+    const overflow = body.length - maxLen + 3; // +3 под "..."
+    desc = desc.slice(0, Math.max(0, desc.length - overflow));
+    desc = desc ? desc + '...' : desc;
+    body = [header, desc ? `\n\n${desc}` : '', link].join('');
+  }
 
   if (imageUrl) {
     return {
       type:      'photo',
       imageUrl,
       imageData: imageData || null,
-      caption:   truncate(body, MAX_TG_CAPTION),
+      caption:   body,
       parseMode: 'HTML',
     };
   }
 
   return {
     type:      'text',
-    text:      truncate(body, MAX_TG_TEXT),
+    text:      body,
     parseMode: 'HTML',
   };
 }

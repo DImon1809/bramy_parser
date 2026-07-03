@@ -4,22 +4,41 @@ const config = require('./config');
 
 const BASE = config.scraper.baseUrl;
 
-// Ключевые слова в заголовке — считаем инструкцией (для Новостей)
-const INSTRUCTION_TITLE_RX = /^(как |виды |способы |подготовка |замер |устройство |конструкция |монтаж|установка |регулировка|полотно |короба |направляющие|механизм|кардан|ленточное|накладной|встроенный|комбинированный|производство|профиля |системы |материалы |схема |подключение|настройка|ремонт|обслуживание|технические характеристики)/i;
+// Ключевые слова в заголовке — считаем инструкцией/обслуживанием, не продающим контентом
+const INSTRUCTION_TITLE_RX = /^(как |подготовка |замер |устройство |конструкция |монтаж|установка |регулировка|полотно |короба |направляющие|механизм|кардан|ленточное|накладной|встроенный|комбинированный|производство|схема |подключение|настройка|ремонт|обслуживание|технические характеристики|врезка |эксплуатац|инструкц|сервис)/i;
 
 // URL-части страниц магазина, которые нужно пропускать
 const SHOP_EXCLUDE_URL_PARTS = ['tehnicheskie-instrukcii', 'sertifikat', 'sertifikaty'];
 
 // Разделы для мониторинга
 const SECTIONS = [
-  { listUrl: `${BASE}/news.html`,   articlePrefix: '/news/',   section: 'Новости', type: 'news',  filterInstructions: false, listType: 'news' },
-  { listUrl: `${BASE}/action.html`, articlePrefix: '/action/', section: 'Акции',   type: 'promo', filterInstructions: false, listType: 'news' },
+  { listUrl: `${BASE}/news.html`,   articlePrefix: '/news/',   section: 'Новости', type: 'news',  filterInstructions: true, listType: 'news' },
+  { listUrl: `${BASE}/action.html`, articlePrefix: '/action/', section: 'Акции',   type: 'promo', filterInstructions: true, listType: 'news' },
   // Магазин — информационные страницы категорий товаров
-  { listUrl: `${BASE}/rolstavni.html`,        articlePrefix: '/rolstavni/',        section: 'Магазин / Рольставни',        type: 'news', listType: 'shop' },
-  { listUrl: `${BASE}/shlagbaumy.html`,        articlePrefix: '/shlagbaumy/',       section: 'Магазин / Шлагбаумы',         type: 'news', listType: 'shop' },
-  { listUrl: `${BASE}/vorota-sekcionnye.html`, articlePrefix: '/vorota-sekcionnye/', section: 'Магазин / Ворота секционные', type: 'news', listType: 'shop' },
-  { listUrl: `${BASE}/vorota-raspashnye.html`, articlePrefix: '/vorota-raspashnye/', section: 'Магазин / Ворота распашные',  type: 'news', listType: 'shop' },
-  { listUrl: `${BASE}/vorota-otkatnye.html`,   articlePrefix: '/vorota-otkatnye/',   section: 'Магазин / Ворота откатные',   type: 'news', listType: 'shop' },
+  { listUrl: `${BASE}/rolstavni.html`,        articlePrefix: '/rolstavni/',        section: 'Магазин / Рольставни',        type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/shlagbaumy.html`,        articlePrefix: '/shlagbaumy/',       section: 'Магазин / Шлагбаумы',         type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/vorota-sekcionnye.html`, articlePrefix: '/vorota-sekcionnye/', section: 'Магазин / Ворота секционные', type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/vorota-raspashnye.html`, articlePrefix: '/vorota-raspashnye/', section: 'Магазин / Ворота распашные',  type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/vorota-otkatnye.html`,   articlePrefix: '/vorota-otkatnye/',   section: 'Магазин / Ворота откатные',   type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/solncezashhitnye-sistemy.html`, articlePrefix: '/solncezashhitnye-sistemy/', section: 'Магазин / Солнцезащитные системы', type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/metallokonstrukcii.html`,        articlePrefix: '/metallokonstrukcii/',        section: 'Магазин / Металлоконструкции',      type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/domofony.html`,                  articlePrefix: '/domofony/',                  section: 'Магазин / Домофоны',                type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/videonablyudenie.html`,          articlePrefix: '/videonablyudenie/',          section: 'Магазин / Видеонаблюдение',          type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/radioupravlenie.html`,           articlePrefix: '/radioupravlenie/',           section: 'Магазин / Радиоуправление',          type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/aksessuary.html`,                articlePrefix: '/aksessuary/',                section: 'Магазин / Аксессуары',               type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/zamki-dovodchiki.html`,          articlePrefix: '/zamki-dovodchiki/',          section: 'Магазин / Замки, доводчики',         type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/istochniki-pitaniya.html`,       articlePrefix: '/istochniki-pitaniya/',       section: 'Магазин / Источники питания',        type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/mezhkomnatnye-dveri.html`,       articlePrefix: '/mezhkomnatnye-dveri/',       section: 'Магазин / Межкомнатные двери',       type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/avtomaticheskie-cepi-i-parkovochnye-sistemy.html`, articlePrefix: '/avtomaticheskie-cepi-i-parkovochnye-sistemy/', section: 'Магазин / Парковочные системы', type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/solncezashhita.html`,            articlePrefix: '/solncezashhita/',            section: 'Магазин / Солнцезащита',             type: 'news', listType: 'shop', filterInstructions: true },
+  // Настоящие каталоги товаров (с ценами) — отдельные от страниц-статей выше,
+  // те же категории продублированы под URL с цифровым суффиксом
+  { listUrl: `${BASE}/rolstavni2.html`,        articlePrefix: '/rolstavni2/',        section: 'Магазин / Рольставни (каталог)',        type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/shlagbaumy2.html`,       articlePrefix: '/shlagbaumy2/',       section: 'Магазин / Шлагбаумы (каталог)',         type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/vorota-sekcionnye1.html`, articlePrefix: '/vorota-sekcionnye1/', section: 'Магазин / Ворота секционные (каталог)', type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/vorota-raspashnye2.html`, articlePrefix: '/vorota-raspashnye2/', section: 'Магазин / Ворота распашные (каталог)',  type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/vorota-otkatnye1.html`,  articlePrefix: '/vorota-otkatnye1/',  section: 'Магазин / Ворота откатные (каталог)',   type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/domofony2.html`,         articlePrefix: '/domofony2/',         section: 'Магазин / Домофоны (каталог)',          type: 'news', listType: 'catalog2', filterInstructions: true },
 ];
 
 function parseDate(str = '') {
@@ -72,26 +91,33 @@ async function scrapeNewsList(page, section) {
 
 // ─── Парсинг списка страниц магазина ─────────────────────────────────────────
 
-async function scrapeShopList(page, section) {
-  return page.evaluate(({ articlePrefix, excludeUrlParts }) => {
+// Ссылки на странице, у которых путь состоит ровно из `depth` сегментов
+// (/section/page.html — depth=2, /section/sub/page.html — depth=3, и т.д.).
+// containerSelector сужает поиск до конкретного блока страницы — это важно на
+// страницах подкатегорий каталога: в боковой колонке (.leftcol) сайт рисует
+// виджеты "новинки"/"хиты"/"реклама" со случайными товарами со всего сайта,
+// и без сужения они попадают в список наравне с настоящими товарами раздела.
+function extractLinksAtDepth(page, articlePrefix, depth, excludeUrlParts, containerSelector = 'body') {
+  return page.evaluate(({ articlePrefix, depth, excludeUrlParts, containerSelector }) => {
+    const root = document.querySelector(containerSelector) || document.body;
     const items = [];
     const seen = new Set();
 
-    document.querySelectorAll('a[href]').forEach(a => {
+    root.querySelectorAll('a[href]').forEach(a => {
       const href = a.href || '';
       const text = a.textContent.trim().replace(/\s+/g, ' ');
       if (!href.includes(articlePrefix) || !text) return;
 
-      // Только прямые подстраницы категории (/section/page.html, не глубже)
+      let parts;
       try {
-        const path = new URL(href).pathname.replace(/^\//, '');
-        const parts = path.split('/');
-        if (parts.length !== 2) return; // пропускаем /section/sub/page.html
+        const u = new URL(href);
+        if (u.search) return; // ссылки пагинации/сортировки — не самостоятельные страницы
+        parts = u.pathname.replace(/^\//, '').split('/');
       } catch (_) { return; }
+      if (parts.length !== depth) return;
 
       if (seen.has(href)) return;
 
-      // Исключаем технические страницы по URL
       const hrefLower = href.toLowerCase();
       if (excludeUrlParts.some(p => hrefLower.includes(p))) return;
 
@@ -100,7 +126,57 @@ async function scrapeShopList(page, section) {
     });
 
     return items;
-  }, { articlePrefix: section.articlePrefix, excludeUrlParts: SHOP_EXCLUDE_URL_PARTS });
+  }, { articlePrefix, depth, excludeUrlParts, containerSelector });
+}
+
+async function scrapeShopList(page, section) {
+  return extractLinksAtDepth(page, section.articlePrefix, 2, SHOP_EXCLUDE_URL_PARTS);
+}
+
+// Контейнер с основным контентом страницы (тот же, что использует scrapeArticle
+// для текста статьи) — исключает сайдбар с виджетами рекомендаций
+const MAIN_CONTENT_SELECTOR = '.mainpole_nomain_page';
+
+// Некоторые разделы магазина продублированы отдельным "настоящим" каталогом
+// товаров (URL с цифровым суффиксом, например rolstavni2.html) — в отличие от
+// его страницы-статьи (rolstavni.html), товары там лежат на уровень глубже:
+// категория → подкатегория → товар. Подкатегории берём из навигационного меню
+// сайта (стабильны), товары — с каждой подкатегории отдельно.
+//
+// У подкатегорий может быть очень глубокая пагинация (сотни товаров, десятки
+// страниц) — обходить её всю на каждой проверке нереально. Вместо этого
+// открываем подкатегорию с сортировкой "сначала новые" (?sortby=new) и берём
+// только первую страницу — этого достаточно, чтобы не пропустить товары,
+// добавленные между проверками.
+async function scrapeCatalogList(page, section) {
+  const subcats = await extractLinksAtDepth(page, section.articlePrefix, 2, SHOP_EXCLUDE_URL_PARTS);
+  const products = [];
+  const seen = new Set();
+
+  for (const sub of subcats) {
+    const sortedUrl = `${sub.url}?sortby=new`;
+    try {
+      const res = await page.goto(sortedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      if (!res || res.status() >= 400) {
+        logger.warn(`Страница недоступна: ${sortedUrl} (HTTP ${res?.status()})`);
+        continue;
+      }
+      await page.waitForTimeout(1000);
+    } catch (e) {
+      logger.warn(`Не удалось открыть ${sortedUrl}: ${e.message}`);
+      continue;
+    }
+
+    const items = await extractLinksAtDepth(page, section.articlePrefix, 3, SHOP_EXCLUDE_URL_PARTS, `${MAIN_CONTENT_SELECTOR} .cont-items`);
+    for (const item of items) {
+      // Один и тот же товар иногда встречается в нескольких подкатегориях
+      if (seen.has(item.url)) continue;
+      seen.add(item.url);
+      products.push(item);
+    }
+  }
+
+  return products;
 }
 
 // ─── Универсальный парсинг списка ─────────────────────────────────────────────
@@ -118,6 +194,9 @@ async function scrapeList(page, section) {
     return [];
   }
 
+  if (section.listType === 'catalog2') {
+    return scrapeCatalogList(page, section);
+  }
   if (section.listType === 'shop') {
     return scrapeShopList(page, section);
   }
@@ -207,10 +286,117 @@ function detectCategory(url, title) {
   return null;
 }
 
+// ─── Автообнаружение новых разделов каталога ─────────────────────────────────
+
+// Выпадающее меню "Магазин" в шапке сайта — единственное место, где перечислены
+// все категории реального каталога товаров. Если владелец сайта добавит сюда
+// новую категорию, парсер подхватит её сам — не нужно вручную дописывать SECTIONS.
+const SHOP_MENU_LABEL = 'Магазин';
+
+async function readShopMenu(page) {
+  try {
+    await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(1000);
+  } catch (e) {
+    logger.warn(`Не удалось открыть главную для поиска новых разделов: ${e.message}`);
+    return [];
+  }
+
+  return page.evaluate((label) => {
+    const nav = document.querySelector('.menu-nav');
+    if (!nav) return [];
+    const shopLink = [...nav.querySelectorAll('a')].find((a) => a.textContent.trim() === label);
+    const submenu = shopLink?.closest('li')?.querySelector('ul');
+    if (!submenu) return [];
+
+    return [...submenu.children]
+      .filter((c) => c.tagName === 'LI')
+      .map((li) => {
+        const a = li.querySelector(':scope > a');
+        return a ? { href: a.href, title: a.textContent.trim() } : null;
+      })
+      .filter(Boolean);
+  }, SHOP_MENU_LABEL);
+}
+
+function toArticlePrefix(href) {
+  const path = new URL(href).pathname.replace(/\.html$/, '');
+  return `${path}/`;
+}
+
+// Определяет, лежат ли товары прямо в категории (глубина 2, как scrapeShopList)
+// или ещё уровнем глубже, в подкатегориях (глубина 3, как scrapeCatalogList)
+async function detectListType(page, listUrl, articlePrefix) {
+  try {
+    const res = await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    if (!res || res.status() >= 400) return null;
+    await page.waitForTimeout(1000);
+  } catch (_) {
+    return null;
+  }
+
+  const level2 = await extractLinksAtDepth(page, articlePrefix, 2, SHOP_EXCLUDE_URL_PARTS);
+  if (level2.length === 0) return null;
+
+  try {
+    await page.goto(`${level2[0].url}?sortby=new`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(1000);
+  } catch (_) {
+    return 'shop';
+  }
+  const level3 = await extractLinksAtDepth(page, articlePrefix, 3, SHOP_EXCLUDE_URL_PARTS, `${MAIN_CONTENT_SELECTOR} .cont-items`);
+  return level3.length > 0 ? 'catalog2' : 'shop';
+}
+
+// Сравнивает меню "Магазин" со статическим списком SECTIONS и возвращает
+// описания разделов, которых там ещё нет
+async function discoverSections(page, knownListUrls) {
+  let menuItems;
+  try {
+    menuItems = await readShopMenu(page);
+  } catch (e) {
+    logger.warn(`Автообнаружение разделов не удалось: ${e.message}`);
+    return [];
+  }
+
+  const discovered = [];
+  for (const item of menuItems) {
+    if (knownListUrls.has(item.href)) continue;
+
+    const articlePrefix = toArticlePrefix(item.href);
+    const listType = await detectListType(page, item.href, articlePrefix);
+    if (!listType) {
+      logger.warn(`Автообнаружение: не удалось определить тип нового раздела "${item.title}" (${item.href})`);
+      continue;
+    }
+
+    discovered.push({
+      listUrl: item.href,
+      articlePrefix,
+      section: `Магазин / ${item.title}${listType === 'catalog2' ? ' (каталог)' : ''}`,
+      type: 'news',
+      listType,
+      filterInstructions: true,
+      autoDiscovered: true,
+    });
+  }
+  return discovered;
+}
+
 // ─── Главная функция ──────────────────────────────────────────────────────────
 
+// Раздел уже "заселён" (виделся раньше) — проверяем не по всей базе, а по конкретному
+// разделу, чтобы новые разделы, добавленные позже, сперва тоже молча заполнялись,
+// а не публиковали разом все старые страницы, которые в них найдутся.
+function isSectionSeeded(existingArticles, section) {
+  return existingArticles.some(
+    (a) => a.section === section.section || a.section.startsWith(`${section.section} / `)
+  );
+}
+
 async function getNewArticles(db) {
-  const isFirstRun = db.all().length === 0;
+  const existingArticles = db.all();
+  const isFirstRun = existingArticles.length === 0;
 
   const browser = await chromium.launch({
     headless: true,
@@ -230,22 +416,32 @@ async function getNewArticles(db) {
   }
 
   try {
-    for (const section of SECTIONS) {
-      logger.info(`Проверяем: ${section.section} (${section.listUrl})`);
+    const knownListUrls = new Set(SECTIONS.map((s) => s.listUrl));
+    const discovered = await discoverSections(page, knownListUrls);
+    const sections = [...SECTIONS, ...discovered];
+
+    for (const section of sections) {
+      const sectionSeeded = isSectionSeeded(existingArticles, section);
+
+      if (section.autoDiscovered && !sectionSeeded) {
+        await logger.infoNotify(`Обнаружен новый раздел на сайте: «${section.section}» (${section.listUrl}) — добавлен в мониторинг автоматически, база заполняется без публикации`);
+      }
+
+      logger.info(`Проверяем: ${section.section} (${section.listUrl})${sectionSeeded ? '' : ' — новый раздел, заполняем базу'}`);
 
       const listings = await scrapeList(page, section);
       logger.info(`  Найдено в списке: ${listings.length}`);
 
       for (const item of listings) {
-        // Для новостей — фильтруем инструкции по заголовку
-        if (section.listType === 'news' && section.filterInstructions && INSTRUCTION_TITLE_RX.test(item.title)) {
-          logger.info(`  Инструкция, пропуск: ${item.title}`);
+        // Фильтруем инструкции/сервис по заголовку — оставляем только продающий контент
+        if (section.filterInstructions && INSTRUCTION_TITLE_RX.test(item.title)) {
+          logger.info(`  Инструкция/сервис, пропуск: ${item.title}`);
           continue;
         }
 
         if (db.exists(item.url)) continue;
 
-        if (isFirstRun) {
+        if (!sectionSeeded) {
           db.saveAsSeen({
             url:         item.url,
             title:       item.title,
