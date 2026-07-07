@@ -81,7 +81,12 @@ async function onStatus(chatId, cbId) {
 }
 
 async function onTestRun(chatId, cbId) {
-  await api('answerCallbackQuery', { callback_query_id: cbId, text: 'Запускаю...' });
+  try {
+    await api('answerCallbackQuery', { callback_query_id: cbId, text: 'Запускаю...' });
+  } catch (e) {
+    // Не критично для самого теста (например, callback уже устарел) — просто продолжаем
+    logger.warn(`Тест: answerCallbackQuery не удался: ${e.stack || e.message}`);
+  }
 
   const latest = db.getLatest();
   if (!latest) {
@@ -141,7 +146,11 @@ async function onTestRun(chatId, cbId) {
     }
   }
 
-  await sendMsg(chatId, result.join('\n'), { reply_markup: mainKeyboard() });
+  try {
+    await sendMsg(chatId, result.join('\n'), { reply_markup: mainKeyboard() });
+  } catch (e) {
+    logger.warn(`Тест: не удалось отправить итоговый отчёт (${latest.title}): ${e.stack || e.message}`);
+  }
 }
 
 // ─── Диспетчер обновлений ─────────────────────────────────────────────────────
@@ -191,7 +200,7 @@ async function startPolling() {
       });
       for (const upd of res.data?.result || []) {
         offset = upd.update_id + 1;
-        handleUpdate(upd).catch(e => logger.warn(`Bot handleUpdate: ${e.message}`));
+        handleUpdate(upd).catch(e => logger.warn(`Bot handleUpdate: ${e.stack || e.message}`));
       }
     } catch (e) {
       logger.warn(`TG polling: ${e.message}`);

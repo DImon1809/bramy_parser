@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { chromium } = require('playwright');
 const logger = require('./logger');
 const config = require('./config');
@@ -24,13 +26,13 @@ const SECTIONS = [
   { listUrl: `${BASE}/metallokonstrukcii.html`,        articlePrefix: '/metallokonstrukcii/',        section: 'Магазин / Металлоконструкции',      type: 'news', listType: 'shop', filterInstructions: true },
   { listUrl: `${BASE}/domofony.html`,                  articlePrefix: '/domofony/',                  section: 'Магазин / Домофоны',                type: 'news', listType: 'shop', filterInstructions: true },
   { listUrl: `${BASE}/videonablyudenie.html`,          articlePrefix: '/videonablyudenie/',          section: 'Магазин / Видеонаблюдение',          type: 'news', listType: 'shop', filterInstructions: true },
-  { listUrl: `${BASE}/radioupravlenie.html`,           articlePrefix: '/radioupravlenie/',           section: 'Магазин / Радиоуправление',          type: 'news', listType: 'shop', filterInstructions: true },
-  { listUrl: `${BASE}/aksessuary.html`,                articlePrefix: '/aksessuary/',                section: 'Магазин / Аксессуары',               type: 'news', listType: 'shop', filterInstructions: true },
-  { listUrl: `${BASE}/zamki-dovodchiki.html`,          articlePrefix: '/zamki-dovodchiki/',          section: 'Магазин / Замки, доводчики',         type: 'news', listType: 'shop', filterInstructions: true },
-  { listUrl: `${BASE}/istochniki-pitaniya.html`,       articlePrefix: '/istochniki-pitaniya/',       section: 'Магазин / Источники питания',        type: 'news', listType: 'shop', filterInstructions: true },
-  { listUrl: `${BASE}/mezhkomnatnye-dveri.html`,       articlePrefix: '/mezhkomnatnye-dveri/',       section: 'Магазин / Межкомнатные двери',       type: 'news', listType: 'shop', filterInstructions: true },
-  { listUrl: `${BASE}/avtomaticheskie-cepi-i-parkovochnye-sistemy.html`, articlePrefix: '/avtomaticheskie-cepi-i-parkovochnye-sistemy/', section: 'Магазин / Парковочные системы', type: 'news', listType: 'shop', filterInstructions: true },
-  { listUrl: `${BASE}/solncezashhita.html`,            articlePrefix: '/solncezashhita/',            section: 'Магазин / Солнцезащита',             type: 'news', listType: 'shop', filterInstructions: true },
+  { listUrl: `${BASE}/radioupravlenie.html`,           articlePrefix: '/radioupravlenie/',           section: 'Магазин / Радиоуправление',          type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/aksessuary.html`,                articlePrefix: '/aksessuary/',                section: 'Магазин / Аксессуары',               type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/zamki-dovodchiki.html`,          articlePrefix: '/zamki-dovodchiki/',          section: 'Магазин / Замки, доводчики',         type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/istochniki-pitaniya.html`,       articlePrefix: '/istochniki-pitaniya/',       section: 'Магазин / Источники питания',        type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/mezhkomnatnye-dveri.html`,       articlePrefix: '/mezhkomnatnye-dveri/',       section: 'Магазин / Межкомнатные двери',       type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/avtomaticheskie-cepi-i-parkovochnye-sistemy.html`, articlePrefix: '/avtomaticheskie-cepi-i-parkovochnye-sistemy/', section: 'Магазин / Парковочные системы', type: 'news', listType: 'catalog2', filterInstructions: true },
+  { listUrl: `${BASE}/solncezashhita.html`,            articlePrefix: '/solncezashhita/',            section: 'Магазин / Солнцезащита',             type: 'news', listType: 'catalog2', filterInstructions: true },
   // Настоящие каталоги товаров (с ценами) — отдельные от страниц-статей выше,
   // те же категории продублированы под URL с цифровым суффиксом
   { listUrl: `${BASE}/rolstavni2.html`,        articlePrefix: '/rolstavni2/',        section: 'Магазин / Рольставни (каталог)',        type: 'news', listType: 'catalog2', filterInstructions: true },
@@ -90,6 +92,22 @@ async function scrapeNewsList(page, section) {
 }
 
 // ─── Парсинг списка страниц магазина ─────────────────────────────────────────
+
+// Картинки, шрифты, видео и CSS не нужны ни для извлечения ссылок из списков, ни
+// для чтения текста статьи (нужную фотографию товара мы потом скачиваем отдельным
+// целевым fetch() — у него другой resourceType, эта блокировка его не затронет).
+// Для сайта с десятками фото на странице категории это основной потребитель
+// CPU/трафика headless-браузера — блокировка ощутимо снижает нагрузку.
+const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font', 'stylesheet']);
+
+async function blockHeavyResources(context) {
+  await context.route('**/*', (route) => {
+    if (BLOCKED_RESOURCE_TYPES.has(route.request().resourceType())) {
+      return route.abort();
+    }
+    return route.continue();
+  });
+}
 
 // Ссылки на странице, у которых путь состоит ровно из `depth` сегментов
 // (/section/page.html — depth=2, /section/sub/page.html — depth=3, и т.д.).
@@ -218,7 +236,11 @@ async function scrapeArticle(page, url) {
     // Убираем шум
     ['script','style','form','.bramy-mobile-header-wrap','.bramy-nav',
      '.bramy-mobile-nav-wrap','.menu-nav','.menu-top','.B_crumbBox',
-     '.leftcol','.sidebar','.col-basket','.toppart'].forEach(sel => {
+     '.leftcol','.sidebar','.col-basket','.toppart',
+     '.shownow', '.as_rest_no',
+     // бейджи и таймер обратного отсчёта поверх фото товара (внутри .tov,
+     // которую целиком убрать нельзя — там же и само фото)
+     '.tov .actions', '.tov .actions2', '.tov .BckTm', '.tov .BckTmLabel'].forEach(sel => {
       document.querySelectorAll(sel).forEach(el => el.remove());
     });
 
@@ -228,9 +250,18 @@ async function scrapeArticle(page, url) {
     const contentEl = document.querySelector('.mainpole_nomain_page, .colspan4');
     let text = '';
     if (contentEl) {
-      // Убираем форму обратной связи
-      contentEl.querySelectorAll('form, article').forEach(el => el.remove());
+      // Убираем форму обратной связи и заголовок (h1 уже сохранён в переменную
+      // выше, здесь он лишний — иначе название товара дублируется в начале текста)
+      contentEl.querySelectorAll('form, article, h1').forEach(el => el.remove());
+      // .tovar_about h2 целиком дублирует название товара (с префиксом бренда)
+      // и добавляет "голый" код товара без подписи — сам код есть отдельно
+      // в характеристиках как "Артикул: ...", поэтому убираем весь заголовок
+      contentEl.querySelectorAll('.tovar_about h2').forEach(h2 => h2.remove());
       text = contentEl.textContent?.replace(/\s+/g, ' ').trim() || '';
+      // Подпись под фото товара ("для увеличениякликните по изображению") —
+      // склеена без пробела прямо в html сайта, не выделена отдельным тегом,
+      // поэтому убираем её строкой, а не через querySelector
+      text = text.replace(/для увеличения\s*кликните по изображению/gi, '').replace(/\s+/g, ' ').trim();
     }
 
     // Ищем первую подходящую картинку контента
@@ -338,14 +369,20 @@ async function detectListType(page, listUrl, articlePrefix) {
   const level2 = await extractLinksAtDepth(page, articlePrefix, 2, SHOP_EXCLUDE_URL_PARTS);
   if (level2.length === 0) return null;
 
-  try {
-    await page.goto(`${level2[0].url}?sortby=new`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(1000);
-  } catch (_) {
-    return 'shop';
+  // Проверяем несколько подпунктов, а не только первый — раздел может быть смешанным
+  // (часть подпунктов ведёт прямо на товар, часть — на подкатегорию с товарами внутри);
+  // достаточно, чтобы вложенность нашлась хотя бы у одного
+  for (const item of level2.slice(0, 3)) {
+    try {
+      await page.goto(`${item.url}?sortby=new`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(1000);
+    } catch (_) {
+      continue;
+    }
+    const level3 = await extractLinksAtDepth(page, articlePrefix, 3, SHOP_EXCLUDE_URL_PARTS, `${MAIN_CONTENT_SELECTOR} .cont-items`);
+    if (level3.length > 0) return 'catalog2';
   }
-  const level3 = await extractLinksAtDepth(page, articlePrefix, 3, SHOP_EXCLUDE_URL_PARTS, `${MAIN_CONTENT_SELECTOR} .cont-items`);
-  return level3.length > 0 ? 'catalog2' : 'shop';
+  return 'shop';
 }
 
 // Сравнивает меню "Магазин" со статическим списком SECTIONS и возвращает
@@ -383,6 +420,119 @@ async function discoverSections(page, knownListUrls) {
   return discovered;
 }
 
+// ─── Периодическая самопроверка типа обхода уже известных разделов ───────────
+
+// discoverSections ловит только совсем новые пункты меню "Магазин". Но раздел,
+// который уже сидит в SECTIONS как плоский 'shop', может со временем обзавестись
+// вложенными подкатегориями (именно так тихо сломались 7 разделов: Радиоуправление,
+// Аксессуары, Замки/доводчики, Источники питания, Межкомнатные двери, Парковочные
+// системы, Солнцезащита — на сайте появилась вложенность, а конфиг остался старым).
+// Раз в сутки повторно определяем реальный тип для каждого известного раздела и,
+// если он разошёлся с настройкой в коде, используем реальный автоматически (в коде
+// всё равно нужно поправить вручную — иначе после рестарта проверка снова начнётся
+// со старого значения).
+//
+// Важно: смена типа обхода раздела — это не "на сайте появились новые товары",
+// а "мы наконец увидели то, что там уже было". Поэтому при смене эффективного типа
+// для уже "заселённого" раздела все обнаруженные вложенные товары один раз тихо
+// заносятся в базу (как при первом обнаружении раздела), а не публикуются разом —
+// иначе в канал улетит лавина из сотен "новых" товаров, которые на самом деле
+// просто раньше не обходились из-за неверного типа.
+const SECTION_TYPES_FILE = path.join(__dirname, '../../data/section-types.json');
+const REVALIDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function loadSectionTypesState() {
+  try {
+    return JSON.parse(fs.readFileSync(SECTION_TYPES_FILE, 'utf8'));
+  } catch (_) {
+    return { appliedListType: {}, lastValidatedAt: null };
+  }
+}
+
+function persistSectionTypesState(state) {
+  fs.mkdirSync(path.dirname(SECTION_TYPES_FILE), { recursive: true });
+  const json = JSON.stringify(state, null, 2);
+  const tmp = SECTION_TYPES_FILE + '.tmp';
+  fs.writeFileSync(tmp, json, 'utf8');
+  try {
+    fs.renameSync(tmp, SECTION_TYPES_FILE);
+  } catch (_) {
+    // OneDrive блокирует rename на Windows — пишем напрямую
+    fs.writeFileSync(SECTION_TYPES_FILE, json, 'utf8');
+    try { fs.unlinkSync(tmp); } catch (__) {}
+  }
+}
+
+// Загружает состояние один раз на весь прогон и раз в сутки сверяет реальную
+// структуру каждого известного раздела с тем, что зашито в SECTIONS — на время
+// этого прогона (в памяти) переключает listType на реальный, если он разошёлся,
+// плюс шлёт уведомление, чтобы поправить код.
+async function loadAndRevalidateSectionTypes(page, sections) {
+  const state = loadSectionTypesState();
+  state.appliedListType = state.appliedListType || {};
+
+  const now = Date.now();
+  const due = !state.lastValidatedAt || now - new Date(state.lastValidatedAt).getTime() >= REVALIDATE_INTERVAL_MS;
+  if (!due) return state;
+
+  for (const section of sections) {
+    // detectListType различает только 'shop' (глубина 2) и 'catalog2' (глубина 3) —
+    // разделы новостей/акций ('news') устроены и парсятся принципиально иначе
+    // (scrapeNewsList, блоки .news_prods с датой и картинкой), сверять их с этой
+    // проверкой бессмысленно и опасно: она бы молча подменила им тип на 'shop'
+    if (section.listType !== 'shop' && section.listType !== 'catalog2') continue;
+
+    const actualType = await detectListType(page, section.listUrl, section.articlePrefix);
+    if (!actualType || actualType === section.listType) continue;
+
+    await logger.infoNotify(
+      `Раздел «${section.section}» изменил структуру на сайте: в коде указано "${section.listType}", ` +
+      `по факту "${actualType}" — до правки кода использую фактический тип автоматически`
+    );
+    section.listType = actualType;
+  }
+
+  state.lastValidatedAt = new Date().toISOString();
+  persistSectionTypesState(state);
+  return state;
+}
+
+// 2026-07-07: у этих 7 разделов listType был неверно указан как 'shop' и только что
+// исправлен на 'catalog2' (см. комментарий выше) — на сервере, где база уже
+// заполнена под старым (неверным) типом, а section-types.json ещё не существует,
+// это единственный способ узнать, что раньше тип был другим, не разослав разом
+// сотни "новых" товаров. Раздел, которого здесь нет, при отсутствии записи в
+// state.appliedListType по умолчанию считается не нуждающимся в ресинке —
+// это верно для всех остальных разделов, которые всегда обходились правильно.
+const LEGACY_TYPE_FIXES = {
+  [`${BASE}/radioupravlenie.html`]: 'shop',
+  [`${BASE}/aksessuary.html`]: 'shop',
+  [`${BASE}/zamki-dovodchiki.html`]: 'shop',
+  [`${BASE}/istochniki-pitaniya.html`]: 'shop',
+  [`${BASE}/mezhkomnatnye-dveri.html`]: 'shop',
+  [`${BASE}/avtomaticheskie-cepi-i-parkovochnye-sistemy.html`]: 'shop',
+  [`${BASE}/solncezashhita.html`]: 'shop',
+};
+
+function getAppliedListType(state, section) {
+  const recorded = state.appliedListType[section.listUrl];
+  if (recorded !== undefined) return recorded;
+  return LEGACY_TYPE_FIXES[section.listUrl] ?? section.listType;
+}
+
+// Раздел, чей эффективный listType разошёлся с тем, под которым он в прошлый раз
+// был полностью пройден, нужно один раз тихо донабрать в базу, а не публиковать
+// найденное как новые статьи.
+function needsSilentResync(state, section) {
+  return getAppliedListType(state, section) !== section.listType;
+}
+
+function markSectionTypeApplied(state, section) {
+  if (state.appliedListType[section.listUrl] === section.listType) return;
+  state.appliedListType[section.listUrl] = section.listType;
+  persistSectionTypesState(state);
+}
+
 // ─── Главная функция ──────────────────────────────────────────────────────────
 
 // Раздел уже "заселён" (виделся раньше) — проверяем не по всей базе, а по конкретному
@@ -408,6 +558,7 @@ async function getNewArticles(db) {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     locale: 'ru-RU',
   });
+  await blockHeavyResources(context);
   const page = await context.newPage();
   const newArticles = [];
 
@@ -420,11 +571,20 @@ async function getNewArticles(db) {
     const discovered = await discoverSections(page, knownListUrls);
     const sections = [...SECTIONS, ...discovered];
 
-    for (const section of sections) {
-      const sectionSeeded = isSectionSeeded(existingArticles, section);
+    const typesState = await loadAndRevalidateSectionTypes(page, sections);
 
-      if (section.autoDiscovered && !sectionSeeded) {
+    for (const section of sections) {
+      // Раздел уже виделся раньше, но проходился под другим listType (например,
+      // только что исправленным вручную или переключённым автопроверкой выше) —
+      // на этот раз тихо заносим найденное в базу, а не публикуем разом
+      const resyncing = isSectionSeeded(existingArticles, section) && needsSilentResync(typesState, section);
+      const sectionSeeded = isSectionSeeded(existingArticles, section) && !resyncing;
+
+      if (section.autoDiscovered && !sectionSeeded && !resyncing) {
         await logger.infoNotify(`Обнаружен новый раздел на сайте: «${section.section}» (${section.listUrl}) — добавлен в мониторинг автоматически, база заполняется без публикации`);
+      }
+      if (resyncing) {
+        logger.info(`Раздел «${section.section}» пройден заново с исправленным типом обхода — донабираем базу без публикации`);
       }
 
       logger.info(`Проверяем: ${section.section} (${section.listUrl})${sectionSeeded ? '' : ' — новый раздел, заполняем базу'}`);
@@ -475,6 +635,8 @@ async function getNewArticles(db) {
 
         await page.waitForTimeout(1000);
       }
+
+      markSectionTypeApplied(typesState, section);
     }
   } finally {
     await browser.close();
@@ -498,6 +660,7 @@ async function scrapeOneArticle(url) {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     locale: 'ru-RU',
   });
+  await blockHeavyResources(context);
   const page = await context.newPage();
   try {
     return await scrapeArticle(page, url);
@@ -518,6 +681,7 @@ async function scrapeMultiple(urls) {
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     locale: 'ru-RU',
   });
+  await blockHeavyResources(context);
   const page = await context.newPage();
   const results = new Map();
   try {

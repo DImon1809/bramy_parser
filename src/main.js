@@ -28,7 +28,7 @@ async function publish(article) {
   let tgMsgId  = null;
   let vkPostId = null;
 
-  // ── Telegram ──
+  // ── Telegram ── sendTelegram сам делает до 6 попыток с паузой между ними
   try {
     const tg = await sendTelegram(tgPost);
     tgMsgId = tg?.msgId ?? null;
@@ -44,7 +44,7 @@ async function publish(article) {
     await logger.errorNotify(`Не удалось опубликовать в Telegram: «${article.title}»`, e);
   }
 
-  // ── ВКонтакте ──
+  // ── ВКонтакте ── sendVK сам делает до 6 попыток с паузой между ними
   try {
     vkPostId = await sendVK(vkPost);
     logger.info(`  ✓ VK: post_id=${vkPostId}${vkPost.imageData ? ' 🖼' : ' 📝'}`);
