@@ -100,6 +100,10 @@ if (runOnce) {
   bot.startPolling();
   run().catch(e => logger.error(`Ошибка при старте: ${e.message}`));
   cron.schedule(`*/${interval} * * * *`, () => {
+    if (bot.getRunning()) {
+      logger.warn('Предыдущий прогон ещё не завершился — пропускаем это расписание');
+      return;
+    }
     run().catch(e => logger.error(`Ошибка по расписанию: ${e.message}`));
   });
 }

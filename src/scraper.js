@@ -100,6 +100,24 @@ async function scrapeNewsList(page, section) {
 // CPU/трафика headless-браузера — блокировка ощутимо снижает нагрузку.
 const BLOCKED_RESOURCE_TYPES = new Set(['image', 'media', 'font', 'stylesheet']);
 
+// Сервер — 1 vCPU / 1 ГБ RAM. --single-process тут не годится: под нагрузкой
+// headless_shell роняет весь браузер целиком ("Target ... has been closed"),
+// а не отдельную вкладку — проверено на проде 2026-07-07, отовсюду шли крэши.
+// --disable-dev-shm-usage не даёт Chromium упасть из-за маленького /dev/shm.
+const CHROMIUM_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-gpu',
+  '--disable-dev-shm-usage',
+  '--disable-extensions',
+];
+
+// Раздел каталога — это 300-500 товаров в DOM за раз; на одной и той же
+// странице без пересоздания это копится за весь прогон и на 1 ГБ RAM без
+// свопа гоняет Chromium к OOM-килу хоста. Пересоздаём page раз в столько
+// разделов, чтобы Chromium периодически освобождал накопленное.
+const PAGE_RECYCLE_EVERY_SECTIONS = 5;
+
 async function blockHeavyResources(context) {
   await context.route('**/*', (route) => {
     if (BLOCKED_RESOURCE_TYPES.has(route.request().resourceType())) {
@@ -550,7 +568,7 @@ async function getNewArticles(db) {
 
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    args: CHROMIUM_ARGS,
   });
   const context = await browser.newContext({
     userAgent:
@@ -559,7 +577,7 @@ async function getNewArticles(db) {
     locale: 'ru-RU',
   });
   await blockHeavyResources(context);
-  const page = await context.newPage();
+  let page = await context.newPage();
   const newArticles = [];
 
   if (isFirstRun) {
@@ -573,7 +591,12 @@ async function getNewArticles(db) {
 
     const typesState = await loadAndRevalidateSectionTypes(page, sections);
 
-    for (const section of sections) {
+    for (const [sectionIndex, section] of sections.entries()) {
+      if (sectionIndex > 0 && sectionIndex % PAGE_RECYCLE_EVERY_SECTIONS === 0) {
+        await page.close();
+        page = await context.newPage();
+      }
+
       // Раздел уже виделся раньше, но проходился под другим listType (например,
       // только что исправленным вручную или переключённым автопроверкой выше) —
       // на этот раз тихо заносим найденное в базу, а не публикуем разом
@@ -652,7 +675,7 @@ async function getNewArticles(db) {
 async function scrapeOneArticle(url) {
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    args: CHROMIUM_ARGS,
   });
   const context = await browser.newContext({
     userAgent:
@@ -673,7 +696,7 @@ async function scrapeOneArticle(url) {
 async function scrapeMultiple(urls) {
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+    args: CHROMIUM_ARGS,
   });
   const context = await browser.newContext({
     userAgent:

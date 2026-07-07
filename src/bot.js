@@ -16,6 +16,7 @@ let isRunning  = false;
 
 function setLastRun()       { lastRunAt = new Date(); }
 function setRunning(val)    { isRunning = val; }
+function getRunning()       { return isRunning; }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -209,4 +210,4 @@ async function startPolling() {
   }
 }
 
-module.exports = { startPolling, setLastRun, setRunning };
+module.exports = { startPolling, setLastRun, setRunning, getRunning };
