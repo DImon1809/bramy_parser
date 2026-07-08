@@ -9,6 +9,25 @@ const { formatTelegram, formatVK } = require('./formatter');
 const { sendTelegram, sendVK }     = require('./publisher');
 const bot    = require('./bot');
 
+// Обычный полный прогон занимает 6-7 минут. Если завис браузер Playwright
+// (см. инцидент 2026-07-08 — headless-браузер перестаёт отвечать на команды
+// под нагрузкой на сервере 1 vCPU/1GB), promise из getNewArticles может не
+// завершиться никогда, и bot.setRunning(false) не вызовется — тогда каждый
+// следующий запуск по расписанию будет молча пропускаться навсегда.
+// Playwright не даёт доступа к системному процессу браузера при обычном
+// chromium.launch(), поэтому точечно прибить только его нельзя — вместо
+// этого при превышении таймаута роняем весь процесс, чтобы pm2 (autorestart
+// включён) поднял его заново и вместе с ним подчистил зависший Chromium.
+const RUN_TIMEOUT_MS = 20 * 60 * 1000;
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Таймаут ${ms / 60000} мин`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function tgPostUrl(msgId) {
   const ch = config.tg.channelId;
   const slug = ch.startsWith('@') ? ch.slice(1) : `c/${String(ch).replace('-100', '')}`;
@@ -61,9 +80,13 @@ async function run() {
 
   let articles;
   try {
-    articles = await getNewArticles(db);
+    articles = await withTimeout(getNewArticles(db), RUN_TIMEOUT_MS);
   } catch (e) {
     logger.error(`Ошибка парсера: ${e.message}`);
+    if (/^Таймаут /.test(e.message)) {
+      await logger.errorNotify(`Парсер завис более ${RUN_TIMEOUT_MS / 60000} мин (браузер не отвечает) — перезапускаю процесс`);
+      process.exit(1); // pm2 (autorestart) поднимет процесс и подчистит зависший Chromium
+    }
     bot.setRunning(false);
     return;
   }

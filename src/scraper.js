@@ -184,26 +184,41 @@ const MAIN_CONTENT_SELECTOR = '.mainpole_nomain_page';
 // открываем подкатегорию с сортировкой "сначала новые" (?sortby=new) и берём
 // только первую страницу — этого достаточно, чтобы не пропустить товары,
 // добавленные между проверками.
-async function scrapeCatalogList(page, section) {
-  const subcats = await extractLinksAtDepth(page, section.articlePrefix, 2, SHOP_EXCLUDE_URL_PARTS);
+// Один catalog2-раздел может содержать по 15-20+ подкатегорий (например,
+// "Ворота откатные (каталог)" — 492 товара суммарно). Все они обходятся одной
+// и той же вкладкой без пересоздания — Chromium не освобождает память между
+// навигациями полностью, и на 1 ГБ RAM это копится быстрее, чем успевает
+// почиститься recycle "раз в 5 разделов" в getNewArticles (см. зависания
+// 2026-07-07/08 — оба произошли посреди catalog2-раздела). Пересоздаём вкладку
+// каждые несколько подкатегорий прямо внутри обхода, а не только между
+// разделами — состав и порядок найденных товаров при этом не меняется.
+const CATALOG_PAGE_RECYCLE_EVERY_SUBCATS = 4;
+
+async function scrapeCatalogList(pageHolder, context, section) {
+  const subcats = await extractLinksAtDepth(pageHolder.page, section.articlePrefix, 2, SHOP_EXCLUDE_URL_PARTS);
   const products = [];
   const seen = new Set();
 
-  for (const sub of subcats) {
+  for (const [i, sub] of subcats.entries()) {
+    if (i > 0 && i % CATALOG_PAGE_RECYCLE_EVERY_SUBCATS === 0) {
+      await pageHolder.page.close();
+      pageHolder.page = await context.newPage();
+    }
+
     const sortedUrl = `${sub.url}?sortby=new`;
     try {
-      const res = await page.goto(sortedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const res = await pageHolder.page.goto(sortedUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
       if (!res || res.status() >= 400) {
         logger.warn(`Страница недоступна: ${sortedUrl} (HTTP ${res?.status()})`);
         continue;
       }
-      await page.waitForTimeout(1000);
+      await pageHolder.page.waitForTimeout(1000);
     } catch (e) {
       logger.warn(`Не удалось открыть ${sortedUrl}: ${e.message}`);
       continue;
     }
 
-    const items = await extractLinksAtDepth(page, section.articlePrefix, 3, SHOP_EXCLUDE_URL_PARTS, `${MAIN_CONTENT_SELECTOR} .cont-items`);
+    const items = await extractLinksAtDepth(pageHolder.page, section.articlePrefix, 3, SHOP_EXCLUDE_URL_PARTS, `${MAIN_CONTENT_SELECTOR} .cont-items`);
     for (const item of items) {
       // Один и тот же товар иногда встречается в нескольких подкатегориях
       if (seen.has(item.url)) continue;
@@ -217,26 +232,26 @@ async function scrapeCatalogList(page, section) {
 
 // ─── Универсальный парсинг списка ─────────────────────────────────────────────
 
-async function scrapeList(page, section) {
+async function scrapeList(pageHolder, context, section) {
   try {
-    const res = await page.goto(section.listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    const res = await pageHolder.page.goto(section.listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     if (!res || res.status() >= 400) {
       logger.warn(`Страница недоступна: ${section.listUrl} (HTTP ${res?.status()})`);
       return [];
     }
-    await page.waitForTimeout(1500);
+    await pageHolder.page.waitForTimeout(1500);
   } catch (e) {
     logger.warn(`Не удалось открыть ${section.listUrl}: ${e.message}`);
     return [];
   }
 
   if (section.listType === 'catalog2') {
-    return scrapeCatalogList(page, section);
+    return scrapeCatalogList(pageHolder, context, section);
   }
   if (section.listType === 'shop') {
-    return scrapeShopList(page, section);
+    return scrapeShopList(pageHolder.page, section);
   }
-  return scrapeNewsList(page, section);
+  return scrapeNewsList(pageHolder.page, section);
 }
 
 // ─── Парсинг полной статьи ────────────────────────────────────────────────────
@@ -306,7 +321,7 @@ async function scrapeArticle(page, url) {
   if (imageUrl) {
     try {
       const base64 = await page.evaluate(async (imgUrl) => {
-        const resp = await fetch(imgUrl, { credentials: 'include' });
+        const resp = await fetch(imgUrl, { credentials: 'include', signal: AbortSignal.timeout(30000) });
         if (!resp.ok) return null;
         const blob = await resp.blob();
         return new Promise((resolve) => {
@@ -621,7 +636,11 @@ async function getNewArticles(db) {
     locale: 'ru-RU',
   });
   await blockHeavyResources(context);
-  let page = await context.newPage();
+  // Объект-обёртка вместо голой переменной — scrapeCatalogList пересоздаёт
+  // вкладку прямо во время обхода подкатегорий (см. CATALOG_PAGE_RECYCLE_EVERY_SUBCATS)
+  // и обновляет pageHolder.page, чтобы дальнейший код в этом цикле подхватил
+  // актуальную вкладку, а не хранил ссылку на уже закрытую.
+  const pageHolder = { page: await context.newPage() };
   const newArticles = [];
 
   if (isFirstRun) {
@@ -630,15 +649,15 @@ async function getNewArticles(db) {
 
   try {
     const knownListUrls = new Set(SECTIONS.map((s) => s.listUrl));
-    const discovered = await discoverSections(page, knownListUrls);
+    const discovered = await discoverSections(pageHolder.page, knownListUrls);
     const sections = [...SECTIONS, ...discovered];
 
-    const typesState = await loadAndRevalidateSectionTypes(page, sections);
+    const typesState = await loadAndRevalidateSectionTypes(pageHolder.page, sections);
 
     for (const [sectionIndex, section] of sections.entries()) {
       if (sectionIndex > 0 && sectionIndex % PAGE_RECYCLE_EVERY_SECTIONS === 0) {
-        await page.close();
-        page = await context.newPage();
+        await pageHolder.page.close();
+        pageHolder.page = await context.newPage();
       }
 
       // Раздел уже виделся раньше, но проходился под другим listType (например,
@@ -656,7 +675,7 @@ async function getNewArticles(db) {
 
       logger.info(`Проверяем: ${section.section} (${section.listUrl})${sectionSeeded ? '' : ' — новый раздел, заполняем базу'}`);
 
-      const listings = await scrapeList(page, section);
+      const listings = await scrapeList(pageHolder, context, section);
       logger.info(`  Найдено в списке: ${listings.length}`);
 
       for (const item of listings) {
@@ -683,7 +702,7 @@ async function getNewArticles(db) {
         // Новая статья появилась во время мониторинга — парсим и публикуем
         logger.info(`  🆕 Новая статья: ${item.title}`);
         const wasInStopList = !!stopList[item.url];
-        const full = await scrapeArticleWithRetry(page, item.url);
+        const full = await scrapeArticleWithRetry(pageHolder.page, item.url);
 
         if (!full) {
           if (wasInStopList) {
@@ -726,7 +745,7 @@ async function getNewArticles(db) {
           imageData:   full.imageData || null,
         });
 
-        await page.waitForTimeout(1000);
+        await pageHolder.page.waitForTimeout(1000);
       }
 
       markSectionTypeApplied(typesState, section);
