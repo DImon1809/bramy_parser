@@ -47,8 +47,10 @@ module.exports = {
       scrapedAt:   new Date().toISOString(),
       postedTg:    false,
       postedVk:    false,
+      postedOk:    false,
       tgMsgId:     null,
       vkPostId:    null,
+      okPostId:    null,
     };
     persist();
     return true;
@@ -68,8 +70,10 @@ module.exports = {
       scrapedAt:   new Date().toISOString(),
       postedTg:    true,
       postedVk:    true,
+      postedOk:    true,
       tgMsgId:     null,
       vkPostId:    null,
+      okPostId:    null,
     };
     persist();
     return true;
@@ -89,8 +93,10 @@ module.exports = {
       scrapedAt:    new Date().toISOString(),
       postedTg:     true,
       postedVk:     true,
+      postedOk:     true,
       tgMsgId:      null,
       vkPostId:     null,
+      okPostId:     null,
       scrapeFailed: true,
     };
     persist();
@@ -101,17 +107,18 @@ module.exports = {
     return !!data.articles[url];
   },
 
-  markPosted(url, { tgMsgId = null, vkPostId = null } = {}) {
+  markPosted(url, { tgMsgId = null, vkPostId = null, okPostId = null } = {}) {
     const art = data.articles[url];
     if (!art) return;
     if (tgMsgId  != null) { art.postedTg = true;  art.tgMsgId  = tgMsgId;  }
     if (vkPostId != null) { art.postedVk = true;   art.vkPostId = vkPostId; }
+    if (okPostId != null) { art.postedOk = true;   art.okPostId = okPostId; }
     persist();
   },
 
   /** Возвращает статьи, не опубликованные хотя бы на одну платформу */
   getUnposted() {
-    return Object.values(data.articles).filter(a => !a.postedTg || !a.postedVk);
+    return Object.values(data.articles).filter(a => !a.postedTg || !a.postedVk || !a.postedOk);
   },
 
   /** Возвращает самую свежую статью по дате публикации на сайте */

@@ -45,7 +45,7 @@ function typeIcon(articleType) {
   return articleType === 'promo' ? '🎁' : '📰';
 }
 
-function vkHashtags(article) {
+function socialHashtags(article) {
   const tags = new Set(['#bramy']);
   const s = ((article.section || '') + ' ' + (article.title || '')).toLowerCase();
   if (/рольставн|роллет/.test(s))  tags.add('#рольставни');
@@ -114,7 +114,7 @@ function formatVK(article) {
   const icon = typeIcon(articleType);
   const desc = withParagraphs(text, 1500);
   const date = formatDate(publishedAt);
-  const tags = vkHashtags(article);
+  const tags = socialHashtags(article);
 
   const lines = [
     `${icon} ${title}`,
@@ -136,4 +136,33 @@ function formatVK(article) {
   };
 }
 
-module.exports = { formatTelegram, formatVK };
+// ─── Одноклассники ────────────────────────────────────────────────────────────
+
+function formatOK(article) {
+  const { title, text, url, section, imageUrl, imageData, articleType, publishedAt } = article;
+
+  const icon = typeIcon(articleType);
+  const desc = withParagraphs(text, 1500);
+  const date = formatDate(publishedAt);
+  const tags = socialHashtags(article);
+
+  const lines = [
+    `${icon} ${title}`,
+    '',
+    ...(section ? [`📂 ${section}`] : []),
+    ...(date    ? [`📅 ${date}`]    : []),
+    '',
+    ...(desc    ? [desc, '']        : []),
+    `🌐 ${url}`,
+    '',
+    tags,
+  ];
+
+  return {
+    text:      truncate(lines.join('\n'), MAX_VK_TEXT),
+    imageUrl:  imageUrl  || null,
+    imageData: imageData || null,
+  };
+}
+
+module.exports = { formatTelegram, formatVK, formatOK };

@@ -3,8 +3,8 @@ const config = require('./config');
 const logger = require('./logger');
 const db     = require('./database');
 const { scrapeOneArticle } = require('./scraper');
-const { formatTelegram, formatVK } = require('./formatter');
-const { sendTelegram, sendVK }     = require('./publisher');
+const { formatTelegram, formatVK, formatOK } = require('./formatter');
+const { sendTelegram, sendVK, sendOK }       = require('./publisher');
 
 const TOKEN   = config.tg.botToken;
 const ADMINS  = new Set(config.tg.adminIds.map(String));
@@ -156,6 +156,21 @@ async function onTestRun(chatId, cbId) {
       result.push(`✅ ВКонтакте: опубликовано — <a href="${vkUrl}">открыть</a>`);
     } catch (e) {
       result.push(`❌ ВКонтакте: ошибка — ${e.message}`);
+    }
+  }
+
+  // ── Одноклассники ──
+  if (latest.postedOk) {
+    const okUrl = latest.okPostId ? `https://ok.ru/topic/${latest.okPostId}` : '';
+    result.push(`ℹ️ ОК: уже опубликовано${okUrl ? ` — <a href="${okUrl}">открыть</a>` : ''}`);
+  } else {
+    try {
+      const okPostId = await sendOK(formatOK(article));
+      db.markPosted(latest.url, { okPostId });
+      const okUrl = `https://ok.ru/topic/${okPostId}`;
+      result.push(`✅ ОК: опубликовано — <a href="${okUrl}">открыть</a>`);
+    } catch (e) {
+      result.push(`❌ ОК: ошибка — ${e.message}`);
     }
   }
 

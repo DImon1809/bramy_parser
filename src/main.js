@@ -5,8 +5,8 @@ const config = require('./config');
 const logger = require('./logger');
 const db     = require('./database');
 const { getNewArticles } = require('./scraper');
-const { formatTelegram, formatVK } = require('./formatter');
-const { sendTelegram, sendVK }     = require('./publisher');
+const { formatTelegram, formatVK, formatOK } = require('./formatter');
+const { sendTelegram, sendVK, sendOK }       = require('./publisher');
 const bot    = require('./bot');
 
 function tgPostUrl(msgId) {
@@ -24,9 +24,11 @@ async function publish(article) {
 
   const tgPost = formatTelegram(article);
   const vkPost = formatVK(article);
+  const okPost = formatOK(article);
 
   let tgMsgId  = null;
   let vkPostId = null;
+  let okPostId = null;
 
   // ── Telegram ── sendTelegram сам делает до 6 попыток с паузой между ними
   try {
@@ -52,7 +54,15 @@ async function publish(article) {
     await logger.errorNotify(`Не удалось опубликовать в ВКонтакте: «${article.title}»`, e);
   }
 
-  db.markPosted(article.url, { tgMsgId, vkPostId });
+  // ── Одноклассники ── sendOK сам делает до 6 попыток с паузой между ними
+  try {
+    okPostId = await sendOK(okPost);
+    logger.info(`  ✓ ОК: id=${okPostId}${okPost.imageData ? ' 🖼' : ' 📝'}`);
+  } catch (e) {
+    await logger.errorNotify(`Не удалось опубликовать в Одноклассниках: «${article.title}»`, e);
+  }
+
+  db.markPosted(article.url, { tgMsgId, vkPostId, okPostId });
 }
 
 async function run() {

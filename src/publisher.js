@@ -2,6 +2,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 const config = require('./config');
 const logger = require('./logger');
+const { sendOK } = require('./ok');
 
 const VK_V = '5.199';
 
@@ -188,4 +189,4 @@ async function sendVK(post) {
   }
 }
 
-module.exports = { sendTelegram, sendVK };
+module.exports = { sendTelegram, sendVK, sendOK };
