@@ -21,8 +21,20 @@ function getRunning()       { return isRunning; }
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function api(method, body = {}) {
-  const res = await axios.post(`${BASE}/${method}`, body);
-  return res.data?.result;
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await axios.post(`${BASE}/${method}`, body, { timeout: 15000 });
+      return res.data?.result;
+    } catch (e) {
+      if (attempt < MAX_ATTEMPTS) {
+        logger.warn(`TG бот: ${method} попытка ${attempt}/${MAX_ATTEMPTS} не удалась (${e.code || e.message}). Повтор через 3с...`);
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 async function sendMsg(chatId, text, extra = {}) {

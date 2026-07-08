@@ -324,6 +324,49 @@ async function scrapeArticle(page, url) {
   return { h1, text, imageUrl, imageData };
 }
 
+// ─── Стоп-лист статей, которые не удаётся спарсить ───────────────────────────
+
+// Статья, парсинг которой упёрся в таймаут/ошибку: пробуем ещё раз в том же
+// прогоне (scrapeArticleWithRetry), и если снова не вышло — откладываем в этот
+// файл вместо того, чтобы просто промолчать. Так как непропарсенная статья не
+// попадает в основную базу (db.exists остаётся false), на следующем прогоне
+// она снова найдётся в списке как "новая" — тогда видим, что URL уже в
+// стоп-листе, и это её вторая попытка. Если и она проваливается — сдаёмся:
+// удаляем из стоп-листа и помечаем в основной базе как scrapeFailed, чтобы
+// не пытаться бесконечно и не публиковать наполовину (без текста/фото).
+const STOP_LIST_FILE = path.join(__dirname, '../../data/stop-list.json');
+
+function loadStopList() {
+  try {
+    return JSON.parse(fs.readFileSync(STOP_LIST_FILE, 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function persistStopList(list) {
+  fs.mkdirSync(path.dirname(STOP_LIST_FILE), { recursive: true });
+  const json = JSON.stringify(list, null, 2);
+  const tmp = STOP_LIST_FILE + '.tmp';
+  fs.writeFileSync(tmp, json, 'utf8');
+  try {
+    fs.renameSync(tmp, STOP_LIST_FILE);
+  } catch (_) {
+    fs.writeFileSync(STOP_LIST_FILE, json, 'utf8');
+    try { fs.unlinkSync(tmp); } catch (__) {}
+  }
+}
+
+// Один повтор сразу же в этом прогоне, если первая попытка не удалась
+// (таймаут, страница недоступна и т.п.)
+async function scrapeArticleWithRetry(page, url) {
+  const first = await scrapeArticle(page, url);
+  if (first) return first;
+  logger.warn(`  Повтор парсинга: ${url}`);
+  await page.waitForTimeout(2000);
+  return scrapeArticle(page, url);
+}
+
 // ─── Определение секции по категории ─────────────────────────────────────────
 
 function detectCategory(url, title) {
@@ -565,6 +608,7 @@ function isSectionSeeded(existingArticles, section) {
 async function getNewArticles(db) {
   const existingArticles = db.all();
   const isFirstRun = existingArticles.length === 0;
+  const stopList = loadStopList();
 
   const browser = await chromium.launch({
     headless: true,
@@ -638,8 +682,34 @@ async function getNewArticles(db) {
 
         // Новая статья появилась во время мониторинга — парсим и публикуем
         logger.info(`  🆕 Новая статья: ${item.title}`);
-        const full = await scrapeArticle(page, item.url);
-        if (!full) continue;
+        const wasInStopList = !!stopList[item.url];
+        const full = await scrapeArticleWithRetry(page, item.url);
+
+        if (!full) {
+          if (wasInStopList) {
+            logger.warn(`  ⛔ Второй прогон подряд не спарсилась — сдаюсь, убираю из стоп-листа: ${item.title}`);
+            delete stopList[item.url];
+            persistStopList(stopList);
+            db.markScrapeFailed({
+              url:         item.url,
+              title:       item.title,
+              section:     section.section,
+              articleType: section.type,
+              publishedAt: toIsoDate(item.date),
+            });
+            await logger.errorNotify(`Не удалось спарсить статью после 2 прогонов, публикация пропущена: «${item.title}»\n${item.url}`);
+          } else {
+            logger.warn(`  ⏳ Не спарсилась — откладываю в стоп-лист до следующего прогона: ${item.title}`);
+            stopList[item.url] = { title: item.title, firstFailedAt: new Date().toISOString() };
+            persistStopList(stopList);
+          }
+          continue;
+        }
+
+        if (wasInStopList) {
+          delete stopList[item.url];
+          persistStopList(stopList);
+        }
 
         const category = detectCategory(item.url, item.title);
         const imgSize  = full.imageData ? `${Math.round(full.imageData.length / 1024)} KB` : 'нет';

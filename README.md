@@ -245,10 +245,12 @@ CHECK_INTERVAL_MINUTES=10
 3. В этом браузере открой ссылку (подставь свой `client_id`):
 
    ```
-   https://oauth.vk.com/authorize?client_id=2685278&scope=wall,photos,groups&response_type=token&redirect_uri=https://oauth.vk.com/blank.html&v=5.199
+   https://oauth.vk.com/authorize?client_id=2685278&scope=wall,photos,groups,offline&response_type=token&redirect_uri=https://oauth.vk.com/blank.html&v=5.199
    ```
 
-4. Авторизуйся → в адресной строке скопируй значение `access_token=...`
+   Важно: scope обязательно должен включать `offline` — без него VK выдаёт токен с ограниченным сроком жизни (`expires_in` в ответе), а с `offline` токен постоянный (`expires_in=0`) и не протухает сам по себе, только по ручному отзыву или смене пароля.
+
+4. Авторизуйся → в адресной строке скопируй значение `access_token=...` (там же можно проверить `expires_in=0` — если значение не 0, значит `offline` не применился)
 
 5. Вставь токен в `VK_USER_TOKEN` на сервере, перезапусти бот:
 

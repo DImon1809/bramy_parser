@@ -75,6 +75,28 @@ module.exports = {
     return true;
   },
 
+  /** Статья не спарсилась второй прогон подряд — не публикуем и больше не пытаемся. */
+  markScrapeFailed(article) {
+    if (data.articles[article.url]) return false;
+    data.articles[article.url] = {
+      url:          article.url,
+      title:        article.title,
+      section:      article.section     || '',
+      articleType:  article.articleType || 'news',
+      publishedAt:  article.publishedAt || '',
+      text:         '',
+      imageUrl:     null,
+      scrapedAt:    new Date().toISOString(),
+      postedTg:     true,
+      postedVk:     true,
+      tgMsgId:      null,
+      vkPostId:     null,
+      scrapeFailed: true,
+    };
+    persist();
+    return true;
+  },
+
   exists(url) {
     return !!data.articles[url];
   },
