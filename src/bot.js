@@ -1,3 +1,4 @@
+const os     = require('os');
 const axios  = require('axios');
 const config = require('./config');
 const logger = require('./logger');
@@ -43,10 +44,62 @@ async function sendMsg(chatId, text, extra = {}) {
 
 function mainKeyboard() {
   return {
-    inline_keyboard: [[
-      { text: '🚀 Тестовый запуск', callback_data: 'test_run' },
-      { text: '📊 Состояние',        callback_data: 'status'   },
-    ]],
+    inline_keyboard: [
+      [
+        { text: '🚀 Тестовый запуск', callback_data: 'test_run' },
+        { text: '📊 Состояние',        callback_data: 'status'   },
+      ],
+      [
+        { text: '🔄 Перезапустить', callback_data: 'restart_confirm' },
+      ],
+    ],
+  };
+}
+
+function formatBytes(bytes) {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} ГБ`;
+}
+
+function cpuTimesTotal() {
+  return os.cpus().reduce((acc, c) => {
+    for (const k in c.times) acc[k] = (acc[k] || 0) + c.times[k];
+    return acc;
+  }, {});
+}
+
+// Загрузка CPU честным способом — как top/htop: две выборки суммарного
+// времени по всем ядрам с паузой между ними, доля неidle-времени в разнице.
+// Раньше здесь был os.loadavg() (очередь на CPU за 1/5/15 минут), пересчитанный
+// в "%" делением на число ядер — на 1 ядре это давало вроде 313%, что не
+// сравнить с показометрами вроде top (там было честных ~70%).
+function getCpuPercent(sampleMs = 200) {
+  return new Promise((resolve) => {
+    const start = cpuTimesTotal();
+    setTimeout(() => {
+      const end = cpuTimesTotal();
+      const idleDiff  = end.idle - start.idle;
+      const totalDiff = Object.keys(end).reduce((sum, k) => sum + (end[k] - start[k]), 0);
+      resolve(totalDiff <= 0 ? 0 : Math.round(100 * (1 - idleDiff / totalDiff)));
+    }, sampleMs);
+  });
+}
+
+// os.loadavg() на Windows всегда возвращает [0,0,0] (не поддерживается ОС) —
+// на боевом Linux-сервере даёт честную загрузку по 1/5/15-минутным окнам.
+// Показываем как отдельную справочную метрику (очередь, не "%"), чтобы не
+// путать с cpuPercent выше.
+function getSystemStats() {
+  const totalMem = os.totalmem();
+  const freeMem  = os.freemem();
+  const usedMem  = totalMem - freeMem;
+  const cpuCount = os.cpus().length || 1;
+  const [load1, load5, load15] = os.loadavg();
+
+  return {
+    load1, load5, load15,
+    cpuCount,
+    memPercent: Math.round((usedMem / totalMem) * 100),
+    usedMem, totalMem,
   };
 }
 
@@ -89,6 +142,12 @@ async function onStatus(chatId, cbId) {
   if (notPosted) lines.push(`❌ Не опубликовано: ${notPosted}`);
   lines.push('');
   lines.push(isRunning ? '⏳ Парсер сейчас работает...' : '🟢 Парсер активен');
+
+  const stats     = getSystemStats();
+  const cpuPercent = await getCpuPercent();
+  lines.push('');
+  lines.push(`🖥 CPU: ${cpuPercent}% (load avg ${stats.load1.toFixed(2)}/${stats.load5.toFixed(2)}/${stats.load15.toFixed(2)}, ядер: ${stats.cpuCount})`);
+  lines.push(`💾 RAM: ${stats.memPercent}% (${formatBytes(stats.usedMem)} / ${formatBytes(stats.totalMem)})`);
 
   await sendMsg(chatId, lines.join('\n'), { reply_markup: mainKeyboard() });
 }
@@ -181,6 +240,40 @@ async function onTestRun(chatId, cbId) {
   }
 }
 
+// Перезапуск — через process.exit(0): процесс управляется через pm2
+// (autorestart включён), который поднимет его заново. Прямого доступа
+// к системному процессу браузера у Playwright нет (см. main.js), так что
+// это тот же принцип, что и в watchdog'e зависшего прогона — уронить
+// процесс целиком, а не пытаться прибить что-то точечно.
+async function onRestartConfirm(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId });
+
+  const warning = isRunning
+    ? '\n\n⚠️ Сейчас идёт прогон парсера — если он на середине публикации статьи, она может быть помечена как «виденная», но не опубликована.'
+    : '';
+
+  await sendMsg(chatId, `🔄 Перезапустить процесс парсера?${warning}`, {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Да, перезапустить', callback_data: 'restart_do' },
+        { text: '❌ Отмена',            callback_data: 'restart_cancel' },
+      ]],
+    },
+  });
+}
+
+async function onRestartDo(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId, text: 'Перезапускаю...' });
+  await sendMsg(chatId, '🔄 Перезапускаю процесс...');
+  logger.info(`Перезапуск по команде из Telegram (chatId=${chatId})`);
+  setTimeout(() => process.exit(0), 300);
+}
+
+async function onRestartCancel(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId, text: 'Отменено' });
+  await sendMsg(chatId, '❌ Перезапуск отменён', { reply_markup: mainKeyboard() });
+}
+
 // ─── Диспетчер обновлений ─────────────────────────────────────────────────────
 
 async function handleUpdate(update) {
@@ -206,8 +299,11 @@ async function handleUpdate(update) {
 
   const cb = update.callback_query;
   if (cb) {
-    if (cb.data === 'status')   await onStatus(chatId, cb.id);
-    if (cb.data === 'test_run') await onTestRun(chatId, cb.id);
+    if (cb.data === 'status')          await onStatus(chatId, cb.id);
+    if (cb.data === 'test_run')        await onTestRun(chatId, cb.id);
+    if (cb.data === 'restart_confirm') await onRestartConfirm(chatId, cb.id);
+    if (cb.data === 'restart_do')      await onRestartDo(chatId, cb.id);
+    if (cb.data === 'restart_cancel')  await onRestartCancel(chatId, cb.id);
   }
 }
 
@@ -219,6 +315,12 @@ async function startPolling() {
     return;
   }
   logger.info('TG бот: запуск...');
+  // Уведомляем при каждом старте процесса — покрывает и ручной перезапуск
+  // из бота (onRestartDo), и автоматический после зависания (watchdog в
+  // main.js), и обычный деплой. Прежний процесс, отправивший "Перезапускаю...",
+  // к этому моменту уже мёртв (process.exit) и сам подтвердить не может —
+  // подтверждает уже новый процесс, когда встаёт на polling.
+  await logger.infoNotify('✅ Процесс запущен и снова на связи');
   let offset = 0;
   while (true) {
     try {
