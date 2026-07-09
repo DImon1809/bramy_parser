@@ -220,13 +220,13 @@ async function onTestRun(chatId, cbId) {
 
   // ── Одноклассники ──
   if (latest.postedOk) {
-    const okUrl = latest.okPostId ? `https://ok.ru/topic/${latest.okPostId}` : '';
+    const okUrl = latest.okPostId ? `https://ok.ru/group/${config.ok.groupId}/topic/${latest.okPostId}` : '';
     result.push(`ℹ️ ОК: уже опубликовано${okUrl ? ` — <a href="${okUrl}">открыть</a>` : ''}`);
   } else {
     try {
       const okPostId = await sendOK(formatOK(article));
       db.markPosted(latest.url, { okPostId });
-      const okUrl = `https://ok.ru/topic/${okPostId}`;
+      const okUrl = `https://ok.ru/group/${config.ok.groupId}/topic/${okPostId}`;
       result.push(`✅ ОК: опубликовано — <a href="${okUrl}">открыть</a>`);
     } catch (e) {
       result.push(`❌ ОК: ошибка — ${e.message}`);
