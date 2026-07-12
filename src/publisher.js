@@ -8,7 +8,7 @@ const VK_V = '5.199';
 
 // ─── Telegram ─────────────────────────────────────────────────────────────────
 
-async function sendTelegramOnce(post) {
+async function sendTelegramOnce(post, channelId) {
   const base = `https://api.telegram.org/bot${config.tg.botToken}`;
   const UPLOAD_TIMEOUT = 30000;
   let res;
@@ -26,7 +26,7 @@ async function sendTelegramOnce(post) {
 
     if (photoBuffer) {
       const form = new FormData();
-      form.append('chat_id',    config.tg.channelId);
+      form.append('chat_id',    channelId);
       form.append('caption',    post.caption);
       form.append('parse_mode', post.parseMode);
       form.append('photo', photoBuffer, { filename: 'photo.jpg', contentType: 'image/jpeg' });
@@ -35,7 +35,7 @@ async function sendTelegramOnce(post) {
     } else {
       // Картинку получить не удалось — отправляем текстом
       res = await axios.post(`${base}/sendMessage`, {
-        chat_id:                  config.tg.channelId,
+        chat_id:                  channelId,
         text:                     post.caption,
         parse_mode:               post.parseMode,
         disable_web_page_preview: false,
@@ -43,7 +43,7 @@ async function sendTelegramOnce(post) {
     }
   } else {
     res = await axios.post(`${base}/sendMessage`, {
-      chat_id:                  config.tg.channelId,
+      chat_id:                  channelId,
       text:                     post.text,
       parse_mode:               post.parseMode,
       disable_web_page_preview: false,
@@ -54,8 +54,10 @@ async function sendTelegramOnce(post) {
   return { msgId: msgId ?? null, withPhoto };
 }
 
-async function sendTelegram(post) {
-  if (!config.tg.botToken || !config.tg.channelId) {
+// channelId по умолчанию — основной канал; передайте другой (например,
+// config.tg.draftChannelId), чтобы отправить в другой чат/канал тем же ботом.
+async function sendTelegram(post, channelId = config.tg.channelId) {
+  if (!config.tg.botToken || !channelId) {
     logger.warn('Telegram не настроен, пропускаем');
     return null;
   }
@@ -63,7 +65,7 @@ async function sendTelegram(post) {
   const MAX_ATTEMPTS = 6;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      return await sendTelegramOnce(post);
+      return await sendTelegramOnce(post, channelId);
     } catch (e) {
       const status = e.response?.status;
       const detail = e.response?.data?.description

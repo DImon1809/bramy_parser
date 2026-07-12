@@ -4,9 +4,12 @@ const cron   = require('node-cron');
 const config = require('./config');
 const logger = require('./logger');
 const db     = require('./database');
-const { getNewArticles } = require('./scraper');
-const { formatTelegram, formatVK, formatOK } = require('./formatter');
+const { getNewArticles, scrapeOneArticle } = require('./scraper');
+const { formatTelegram, formatVK, formatOK, formatZenDraft } = require('./formatter');
 const { sendTelegram, sendVK, sendOK }       = require('./publisher');
+const { rewriteArticle } = require('./rewriter');
+const { checkRefreshTokenWarning } = require('./ok');
+const { checkLowBalanceWarning } = require('./aiBalance');
 const bot    = require('./bot');
 
 // Обычный полный прогон занимает 6-7 минут. Если завис браузер Playwright
@@ -28,10 +31,17 @@ function withTimeout(promise, ms) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function tgPostUrl(msgId) {
-  const ch = config.tg.channelId;
-  const slug = ch.startsWith('@') ? ch.slice(1) : `c/${String(ch).replace('-100', '')}`;
+function tgPostUrlFor(channelId, msgId) {
+  const slug = channelId.startsWith('@') ? channelId.slice(1) : `c/${String(channelId).replace('-100', '')}`;
   return `https://t.me/${slug}/${msgId}`;
+}
+
+function tgPostUrl(msgId) {
+  return tgPostUrlFor(config.tg.channelId, msgId);
+}
+
+function draftPostUrl(msgId) {
+  return tgPostUrlFor(config.tg.draftChannelId, msgId);
 }
 
 function vkPostUrl(postId) {
@@ -82,6 +92,69 @@ async function publish(article) {
   }
 
   db.markPosted(article.url, { tgMsgId, vkPostId, okPostId });
+
+  // ── Дзен ── независимо от остальных каналов. Рерайт через ИИ и отправка в
+  // черновой канал зависят от внешних сервисов (OpenAI, Telegram) — при сбое
+  // сети или временной недоступности не роняем публикацию статьи целиком:
+  // postedZen останется false, и retryZenDrafts() подхватит её на следующем
+  // прогоне парсера (см. run()), без ручного вмешательства.
+  try {
+    await publishZenDraft(article);
+  } catch (e) {
+    logger.warn(`  ⚠️ Дзен: не удалось опубликовать черновик — отложено, попробуем на следующем прогоне (${e.message})`);
+    await logger.errorNotify(`Не удалось опубликовать черновик для Дзена (отложено на повтор): «${article.title}»`, e);
+  }
+}
+
+// Публикует ИИ-переписанную версию статьи в резервный Telegram-канал; сам
+// Дзен подключён к этому каналу через кросспостинг (настраивается на стороне
+// Дзена, вне парсера). Бросает исключение при сбое — решение, уведомлять ли
+// сразу или тихо повторить позже, принимает вызывающий код.
+async function publishZenDraft(article) {
+  if (!config.tg.draftChannelId) return;
+
+  const rewritten = await rewriteArticle(article);
+  const draftPost = formatZenDraft(article, rewritten);
+  const draft = await sendTelegram(draftPost, config.tg.draftChannelId);
+  if (draft?.msgId) {
+    const url = draftPostUrl(draft.msgId);
+    logger.info(`  ✓ Дзен (черновик): ${url}`);
+    db.markPosted(article.url, { zenUrl: url });
+  }
+}
+
+// Повторная попытка для статей, где черновик для Дзена не опубликовался с
+// первого раза (сбой сети/ИИ) — вызывается в конце каждого прогона. imageData
+// не хранится в БД (это Buffer, не JSON), поэтому если у статьи была картинка,
+// перескрапиваем страницу заново, как это уже делает "Тестовый запуск" в боте.
+async function retryZenDrafts() {
+  if (!config.tg.draftChannelId) return;
+
+  const pending = db.getUnpostedZen();
+  if (pending.length === 0) return;
+
+  logger.info(`Дзен: повторная попытка для ${pending.length} черновиков`);
+  for (const stored of pending) {
+    const article = { ...stored };
+    if (article.imageUrl && !article.imageData) {
+      try {
+        const scraped = await scrapeOneArticle(article.url);
+        if (scraped) {
+          article.text      = scraped.text      || article.text      || '';
+          article.imageUrl  = scraped.imageUrl  || article.imageUrl  || null;
+          article.imageData = scraped.imageData || null;
+        }
+      } catch (e) {
+        logger.warn(`Дзен (повтор): не удалось перескрапить ${article.url}: ${e.message}`);
+      }
+    }
+
+    try {
+      await publishZenDraft(article);
+    } catch (e) {
+      logger.warn(`Дзен (повтор): снова не удалось для «${article.title}» — ${e.message}`);
+    }
+  }
 }
 
 async function run() {
@@ -109,6 +182,30 @@ async function run() {
       db.save(article);
       await publish(article);
     }
+  }
+
+  await retryZenDrafts();
+
+  // Ежедневная проверка (внутри самой функции — не чаще раза в сутки), не
+  // истекает ли скоро refresh_token ОК, чтобы не словить внезапную остановку
+  // публикации в ОК через месяц без предупреждения
+  const okWarning = checkRefreshTokenWarning();
+  if (okWarning) {
+    await logger.errorNotify(
+      `ОК: refresh_token истекает примерно через ${okWarning.daysRemaining} дн. ` +
+      `Нажми «🔗 Перелогиниться в ОК» в этом боте, чтобы обновить его.`,
+    );
+  }
+
+  // Аналогичная ежедневная проверка баланса счёта, который даёт доступ к ИИ
+  // (proxyapi.ru) — без него рерайт для Дзена перестанет работать молча
+  const balanceWarning = await checkLowBalanceWarning();
+  if (balanceWarning) {
+    await logger.errorNotify(
+      `ИИ (proxyapi.ru): на счету осталось ${balanceWarning.balance.toFixed(1)} ₽ — ` +
+      `рерайт статей для Дзена скоро перестанет работать. ` +
+      `Пополнить: https://console.proxyapi.ru/`,
+    );
   }
 
   bot.setLastRun();

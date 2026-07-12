@@ -1,11 +1,16 @@
 const os     = require('os');
+const fs     = require('fs');
+const path   = require('path');
 const axios  = require('axios');
 const config = require('./config');
 const logger = require('./logger');
 const db     = require('./database');
 const { scrapeOneArticle } = require('./scraper');
-const { formatTelegram, formatVK, formatOK } = require('./formatter');
+const { formatTelegram, formatVK, formatOK, formatZenDraft } = require('./formatter');
 const { sendTelegram, sendVK, sendOK }       = require('./publisher');
+const { rewriteArticle } = require('./rewriter');
+const { getRefreshTokenStatus, verifyOkAccess, buildAuthorizeUrl, exchangeCodeForTokens } = require('./ok');
+const { getAiBalance } = require('./aiBalance');
 
 const TOKEN   = config.tg.botToken;
 const ADMINS  = new Set(config.tg.adminIds.map(String));
@@ -14,6 +19,10 @@ const BASE    = `https://api.telegram.org/bot${TOKEN}`;
 // Состояние парсера — обновляется из main.js
 let lastRunAt  = null;
 let isRunning  = false;
+
+// Ждём code от ОК после нажатия "🔗 Перелогиниться в ОК" — единственный вид
+// многошагового диалога в боте.
+const pending = new Map(); // chatId -> { action: 'awaiting_ok_code' }
 
 function setLastRun()       { lastRunAt = new Date(); }
 function setRunning(val)    { isRunning = val; }
@@ -52,8 +61,27 @@ function mainKeyboard() {
       [
         { text: '🔄 Перезапустить', callback_data: 'restart_confirm' },
       ],
+      [
+        { text: '🔑 Токен ОК',              callback_data: 'ok_token_status' },
+        { text: '🔗 Перелогиниться в ОК',   callback_data: 'ok_login_start' },
+      ],
+      [
+        { text: '💰 Баланс ИИ', callback_data: 'ai_balance_status' },
+      ],
     ],
   };
+}
+
+function restartPrompt() {
+  return { reply_markup: { inline_keyboard: [[{ text: '🔄 Перезапустить', callback_data: 'restart_confirm' }]] } };
+}
+
+function cancelKeyboard() {
+  return { inline_keyboard: [[{ text: '❌ Отмена', callback_data: 'cancel_pending' }]] };
+}
+
+function formatDateShort(iso) {
+  return new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 function formatBytes(bytes) {
@@ -113,7 +141,7 @@ async function onStart(chatId) {
     '🎁 <b>Акции</b> — все акции',
     '🛒 <b>Магазин</b> — информация о новых товарах\n',
     `⏱ Проверяю каждые ${config.scraper.checkIntervalMinutes} мин`,
-    `📢 Публикую в канал Telegram и группу ВКонтакте`,
+    `📢 Публикую в Telegram, ВКонтакте, Одноклассники + черновики для Дзена`,
   ].join('\n');
 
   await sendMsg(chatId, text, { reply_markup: mainKeyboard() });
@@ -233,10 +261,169 @@ async function onTestRun(chatId, cbId) {
     }
   }
 
+  // ── Дзен (черновик в резервный канал) ──
+  if (latest.postedZen) {
+    result.push(`ℹ️ Дзен: уже опубликовано${latest.zenUrl ? ` — <a href="${latest.zenUrl}">открыть</a>` : ''}`);
+  } else if (!config.tg.draftChannelId) {
+    result.push('ℹ️ Дзен: пропущено (не настроен TG_DRAFT_CHANNEL_ID)');
+  } else {
+    try {
+      const rewritten = await rewriteArticle(article);
+      const draftPost = formatZenDraft(article, rewritten);
+      const draft = await sendTelegram(draftPost, config.tg.draftChannelId);
+      if (draft?.msgId) {
+        const zenUrl = `https://t.me/${config.tg.draftChannelId.replace('@', '')}/${draft.msgId}`;
+        db.markPosted(latest.url, { zenUrl });
+        result.push(`✅ Дзен: черновик опубликован — <a href="${zenUrl}">открыть</a>`);
+      } else {
+        result.push('❌ Дзен: черновик не отправился');
+      }
+    } catch (e) {
+      result.push(`❌ Дзен: ошибка — ${e.message}`);
+    }
+  }
+
   try {
     await sendMsg(chatId, result.join('\n'), { reply_markup: mainKeyboard() });
   } catch (e) {
     logger.warn(`Тест: не удалось отправить итоговый отчёт (${latest.title}): ${e.stack || e.message}`);
+  }
+}
+
+// ─── Токен ОК ──────────────────────────────────────────────────────────────
+
+async function onOkTokenStatus(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId });
+
+  const status = getRefreshTokenStatus();
+  let text;
+  if (!status) {
+    text = '⚠️ Токен ОК не найден — нужна первичная авторизация: нажми «🔗 Перелогиниться в ОК».';
+  } else if (status.daysRemaining > 0) {
+    text = `🔑 Токен ОК: осталось примерно <b>${status.daysRemaining} дн.</b>\nИстечёт ориентировочно ${formatDateShort(status.expiresAt)}`;
+  } else {
+    text = `⚠️ Токен ОК уже должен был истечь (ориентировочно ${formatDateShort(status.expiresAt)}) — пора обновить.`;
+  }
+
+  await sendMsg(chatId, text, { reply_markup: mainKeyboard() });
+}
+
+// ─── Баланс ИИ (proxyapi.ru) ──────────────────────────────────────────────────
+
+const AI_TOPUP_URL = 'https://console.proxyapi.ru/';
+
+async function onAiBalanceStatus(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId });
+
+  let text;
+  try {
+    const data = await getAiBalance();
+    if (!data) {
+      text = '⚠️ Проверка баланса недоступна: OPENAI_BASE_URL не указывает на proxyapi.ru, либо не задан ключ.';
+    } else if (typeof data.balance !== 'number') {
+      text = '⚠️ ProxyAPI вернул неожиданный ответ — не нашёл поле balance.';
+    } else {
+      const low = data.balance <= config.openai.lowBalanceThreshold;
+      const budgetLine = data.budget
+        ? `\nЛимит ключа: ${data.budget.limit.toFixed(1)} ₽, использовано: ${data.budget.used.toFixed(1)} ₽`
+        : '';
+      text = `${low ? '⚠️' : '💰'} Баланс ИИ (proxyapi.ru): <b>${data.balance.toFixed(1)} ₽</b>${budgetLine}` +
+        (low ? `\n\nБаланс низкий — пополнить: ${AI_TOPUP_URL}` : '');
+    }
+  } catch (e) {
+    text = `❌ Не удалось проверить баланс: ${e.response?.data?.error?.message || e.message}\n\n` +
+      'Возможно, доступ к методу баланса не включён для этого ключа — включается в личном кабинете proxyapi.ru.';
+  }
+
+  await sendMsg(chatId, text, { reply_markup: mainKeyboard() });
+}
+
+async function onOkLoginStart(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId });
+  pending.set(chatId, { action: 'awaiting_ok_code' });
+
+  const text = [
+    '🔗 <b>Вход в Одноклассники</b>\n',
+    '1) Открой эту ссылку в браузере под аккаунтом, который админ группы:\n',
+    buildAuthorizeUrl(),
+    '\n2) После входа и подтверждения браузер перейдёт на',
+    `   <code>${config.ok.redirectUri}?code=...</code>`,
+    '   (страница не обязана существовать — code просто появится в адресной строке)',
+    '\n3) Скопируй значение <code>code</code> (оно живёт всего ~2 минуты!) и пришли сюда текстом',
+    '   — можно вставить и весь адрес из строки браузера целиком, я сам найду code в нём.',
+  ].join('\n');
+
+  await sendMsg(chatId, text, { reply_markup: cancelKeyboard() });
+}
+
+async function onCancelPending(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId, text: 'Отменено' });
+  pending.delete(chatId);
+  await sendMsg(chatId, '❌ Отменено, изменения не применены', { reply_markup: mainKeyboard() });
+}
+
+// Принимает и "голый" code, и целиком вставленный адрес из адресной строки
+// (?code=... или &code=...) — так меньше шанс ошибиться при копировании.
+function extractOkCode(text) {
+  const trimmed = text.trim();
+  const match = trimmed.match(/[?&]code=([^&\s]+)/);
+  return match ? decodeURIComponent(match[1]) : trimmed;
+}
+
+// Принимает code, пока чат находится в режиме awaiting_ok_code (после
+// "🔗 Перелогиниться в ОК"). При сбое НЕ выходит из режима — можно прислать
+// новый code (или получить свежую ссылку той же кнопкой) либо нажать
+// "❌ Отмена". Перед сохранением новый токен проверяется живым запросом к API
+// ОК (verifyOkAccess) — если доступа к группе нет, файл НЕ перезаписывается,
+// старый рабочий токен остаётся на месте.
+async function onOkCodeText(chatId, text) {
+  const code = extractOkCode(text);
+  if (!code) {
+    await sendMsg(chatId, '❌ Пустое значение. Пришли code из адресной строки или нажми «Отмена».', { reply_markup: cancelKeyboard() });
+    return;
+  }
+
+  await sendMsg(chatId, '🔄 Обмениваю code на токены...');
+
+  let tokens;
+  try {
+    tokens = await exchangeCodeForTokens(code);
+  } catch (e) {
+    await sendMsg(
+      chatId,
+      `❌ Не удалось обменять code: ${e.message}\n\ncode живёт всего ~2 минуты — возможно, истёк. Нажми «🔗 Перелогиниться в ОК» ещё раз для новой ссылки или «Отмена».`,
+      { reply_markup: cancelKeyboard() },
+    );
+    return;
+  }
+
+  await sendMsg(chatId, '🔍 Проверяю доступ к группе...');
+
+  try {
+    await verifyOkAccess(tokens.accessToken);
+  } catch (e) {
+    await sendMsg(
+      chatId,
+      `⚠️ Токены получены, но проверка доступа не прошла: ${e.message}\n\nВозможно, аккаунт не админ нужной группы. Токены НЕ сохранены. Нажми «Отмена» или попробуй заново.`,
+      { reply_markup: cancelKeyboard() },
+    );
+    return;
+  }
+
+  const state = {
+    ...tokens,
+    refreshTokenIssuedAt: new Date().toISOString(),
+    lastWarnedAt: null,
+  };
+
+  try {
+    fs.mkdirSync(path.dirname(config.ok.tokenPath), { recursive: true });
+    fs.writeFileSync(config.ok.tokenPath, JSON.stringify(state, null, 2), 'utf8');
+    pending.delete(chatId);
+    await sendMsg(chatId, '✅ Авторизация прошла, доступ к группе есть — токены сохранены.\n\nЧтобы изменения подхватились — перезапусти процесс.', restartPrompt());
+  } catch (e) {
+    logger.warn(`Бот: не удалось сохранить ok-token.json: ${e.stack || e.message}`);
+    await sendMsg(chatId, `⚠️ Токены рабочие, но не удалось сохранить файл: ${e.message}`, { reply_markup: cancelKeyboard() });
   }
 }
 
@@ -293,8 +480,18 @@ async function handleUpdate(update) {
   }
 
   if (update.message?.text === '/start') {
+    pending.delete(chatId);
     await onStart(chatId);
     return;
+  }
+
+  // Code от ОК, которого бот ждёт после "🔗 Перелогиниться в ОК"
+  if (update.message?.text) {
+    const p = pending.get(chatId);
+    if (p?.action === 'awaiting_ok_code') {
+      await onOkCodeText(chatId, update.message.text);
+      return;
+    }
   }
 
   const cb = update.callback_query;
@@ -304,6 +501,10 @@ async function handleUpdate(update) {
     if (cb.data === 'restart_confirm') await onRestartConfirm(chatId, cb.id);
     if (cb.data === 'restart_do')      await onRestartDo(chatId, cb.id);
     if (cb.data === 'restart_cancel')  await onRestartCancel(chatId, cb.id);
+    if (cb.data === 'ok_token_status')    await onOkTokenStatus(chatId, cb.id);
+    if (cb.data === 'ok_login_start')     await onOkLoginStart(chatId, cb.id);
+    if (cb.data === 'ai_balance_status')  await onAiBalanceStatus(chatId, cb.id);
+    if (cb.data === 'cancel_pending')     await onCancelPending(chatId, cb.id);
   }
 }
 

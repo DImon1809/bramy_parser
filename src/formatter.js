@@ -22,6 +22,19 @@ function shortDescription(text = '', maxChars = 500) {
 }
 
 // Разбивает плоский текст на читаемые абзацы по ~3 предложения
+// Обрезает текст под лимит, не разрывая мысль многоточием посередине фразы:
+// ищет конец последнего предложения, влезающего в лимит, и режет по нему.
+// Если предложений в пределах лимита нет вовсе (редкий случай) — режет по
+// последнему пробелу, тоже без "...".
+function cutToCompleteSentence(text, maxChars) {
+  if (!text || text.length <= maxChars) return text || '';
+  const cut = text.slice(0, maxChars);
+  const lastEnd = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+  if (lastEnd > maxChars * 0.3) return cut.slice(0, lastEnd + 1).trim();
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim();
+}
+
 function withParagraphs(text = '', maxChars = 500) {
   const trimmed = shortDescription(text, maxChars);
   // Разбиваем по концу предложения + заглавная буква (рус/лат)
@@ -165,4 +178,48 @@ function formatOK(article) {
   };
 }
 
-module.exports = { formatTelegram, formatVK, formatOK };
+// ─── Черновик для Дзена (резервный Telegram-канал) ────────────────────────────
+
+// Сознательно без эмодзи-иконки и строки "📂 раздел · 📅 дата" — эти элементы
+// выдают пост телеграм-канала, а тут нужна самостоятельная статья в духе
+// Дзена: заголовок, текст и в конце — простая ссылка на первоисточник (без
+// эмодзи и призыва в духе "подробнее по ссылке").
+//
+// Если статья не помещается в лимит подписи — обрезаем не многоточием
+// посередине фразы, а по концу последнего целого предложения
+// (см. cutToCompleteSentence), чтобы мысль всегда была закончена.
+function formatZenDraft(article, rewritten) {
+  const { url, imageUrl, imageData } = article;
+  const { title, text } = rewritten;
+
+  const maxLen     = imageUrl ? MAX_TG_CAPTION : MAX_TG_TEXT;
+  const titleBlock = `<b>${title}</b>\n\n`;
+  // Ссылка спрятана за названием домена, а не голым URL — так строка читается
+  // как обычная атрибуция источника, а не как техническая ссылка.
+  const sourceLine = url ? `\n\nИсточник: <a href="${url}">bramy.ru</a>` : '';
+  const budget     = Math.max(0, maxLen - titleBlock.length - sourceLine.length);
+
+  const clean  = (text || '').replace(/\s+/g, ' ').trim();
+  const fitted = clean.length > budget ? cutToCompleteSentence(clean, budget) : clean;
+  const desc   = withParagraphs(fitted, fitted.length || 1);
+
+  const body = `${titleBlock}${desc}${sourceLine}`;
+
+  if (imageUrl) {
+    return {
+      type:      'photo',
+      imageUrl,
+      imageData: imageData || null,
+      caption:   body,
+      parseMode: 'HTML',
+    };
+  }
+
+  return {
+    type:      'text',
+    text:      body,
+    parseMode: 'HTML',
+  };
+}
+
+module.exports = { formatTelegram, formatVK, formatOK, formatZenDraft };

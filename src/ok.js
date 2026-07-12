@@ -11,7 +11,7 @@ const logger   = require('./logger');
 // access_token у ОК живёт недолго (часы), refresh_token — 30 суток. Разовая
 // ручная авторизация (см. ok-auth.js) даёт первую пару токенов; дальше парсер
 // обновляет access_token сам через refresh_token перед каждой публикацией.
-const TOKEN_FILE = path.join(__dirname, '../../data/ok-token.json');
+const TOKEN_FILE = config.ok.tokenPath;
 
 function loadTokenState() {
   try {
@@ -62,6 +62,41 @@ async function refreshAccessToken(refreshToken) {
   };
 }
 
+// ─── Первичная авторизация (OAuth code flow) ─────────────────────────────────
+// Общий код для разового скрипта ok-auth.js и для аналогичного сценария
+// прямо в Telegram-боте (см. onOkLoginStart/onOkCodeText в bot.js) — вместо
+// того чтобы дублировать логику в обоих местах.
+
+function buildAuthorizeUrl() {
+  return `https://connect.ok.ru/oauth/authorize?client_id=${config.ok.applicationId}` +
+    `&scope=GROUP_CONTENT;PHOTO_CONTENT;LONG_ACCESS_TOKEN&response_type=code` +
+    `&redirect_uri=${encodeURIComponent(config.ok.redirectUri)}&layout=w`;
+}
+
+async function exchangeCodeForTokens(code) {
+  const res = await axios.post('https://api.ok.ru/oauth/token.do', null, {
+    params: {
+      code,
+      client_id:     config.ok.applicationId,
+      client_secret: config.ok.applicationSecretKey,
+      redirect_uri:  config.ok.redirectUri,
+      grant_type:    'authorization_code',
+    },
+    timeout: 15000,
+  });
+
+  if (res.data?.error) {
+    throw new Error(`ОК: не удалось обменять code — ${res.data.error_description || res.data.error}`);
+  }
+
+  const { access_token, refresh_token, expires_in } = res.data;
+  return {
+    accessToken:  access_token,
+    refreshToken: refresh_token,
+    expiresAt:    new Date(Date.now() + (expires_in ?? 0) * 1000).toISOString(),
+  };
+}
+
 async function getValidAccessToken() {
   const state = loadTokenState();
   if (!state?.refreshToken) {
@@ -74,8 +109,67 @@ async function getValidAccessToken() {
   }
 
   const refreshed = await refreshAccessToken(state.refreshToken);
-  persistTokenState(refreshed);
+  // ОК обычно не меняет refresh_token при обновлении access_token, но если всё
+  // же вернул новый — это и есть момент настоящей "перевыдачи", от которого
+  // нужно заново отсчитывать 30-дневный срок жизни (см. checkRefreshTokenWarning)
+  const rotated = refreshed.refreshToken !== state.refreshToken;
+  persistTokenState({
+    ...refreshed,
+    refreshTokenIssuedAt: rotated ? new Date().toISOString() : (state.refreshTokenIssuedAt || new Date().toISOString()),
+    lastWarnedAt: rotated ? null : (state.lastWarnedAt || null),
+  });
   return refreshed.accessToken;
+}
+
+// ─── Предупреждение об истечении refresh_token ───────────────────────────────
+
+// ОК не отдаёт срок жизни refresh_token явно через API (только expires_in
+// для access_token) — документация заявляет ~30 суток. Приближаем момент
+// выдачи как дату последнего изменения файла токена при первой миграции
+// (для уже существующих токенов без этого поля) и обновляем точно при
+// настоящей ротации в getValidAccessToken().
+const REFRESH_TOKEN_LIFETIME_DAYS = 30;
+const WARNING_THRESHOLD_DAYS = 5;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function isSameCalendarDay(a, b) {
+  return a.toDateString() === b.toDateString();
+}
+
+/** Возвращает { daysRemaining, expiresAt } без побочных эффектов на счётчик
+ *  предупреждений — для запроса "сколько осталось" по кнопке в боте.
+ *  null, если токена вообще нет. */
+function getRefreshTokenStatus() {
+  const state = loadTokenState();
+  if (!state?.refreshToken) return null;
+
+  let issuedAt = state.refreshTokenIssuedAt;
+  if (!issuedAt) {
+    try {
+      issuedAt = fs.statSync(TOKEN_FILE).mtime.toISOString();
+    } catch (_) {
+      issuedAt = new Date().toISOString();
+    }
+    persistTokenState({ ...state, refreshTokenIssuedAt: issuedAt });
+  }
+
+  const expiresAtMs = new Date(issuedAt).getTime() + REFRESH_TOKEN_LIFETIME_DAYS * DAY_MS;
+  const daysRemaining = Math.ceil((expiresAtMs - Date.now()) / DAY_MS);
+  return { daysRemaining, expiresAt: new Date(expiresAtMs).toISOString() };
+}
+
+/** Возвращает { daysRemaining }, если админа пора предупредить о скором
+ *  истечении refresh_token ОК (не чаще раза в сутки), иначе null. */
+function checkRefreshTokenWarning() {
+  const status = getRefreshTokenStatus();
+  if (!status || status.daysRemaining > WARNING_THRESHOLD_DAYS) return null;
+
+  const state = loadTokenState();
+  const now = new Date();
+  if (state.lastWarnedAt && isSameCalendarDay(new Date(state.lastWarnedAt), now)) return null;
+
+  persistTokenState({ ...state, lastWarnedAt: now.toISOString() });
+  return { daysRemaining: status.daysRemaining };
 }
 
 // ─── Подпись запросов ─────────────────────────────────────────────────────────
@@ -102,6 +196,21 @@ async function callOkApi(method, params, accessToken) {
     throw new Error(`ОК API ${res.data.error_code}: ${res.data.error_msg}`);
   }
   return res.data;
+}
+
+// Проверяет, что access_token рабочий и у приложения реально есть доступ к
+// публикации в настроенную группу — тем же методом API, что и настоящая
+// загрузка фото в uploadPhotoOK() ниже (photosV2.getUploadUrl), но без
+// собственно загрузки файла. Бросает исключение с понятным текстом (в т.ч.
+// код ошибки ОК из callOkApi), если токен нерабочий или доступа нет.
+async function verifyOkAccess(accessToken) {
+  if (!config.ok.groupId) {
+    throw new Error('OK_GROUP_ID не задан — нечего проверять');
+  }
+  const urlData = await callOkApi('photosV2.getUploadUrl', { gid: config.ok.groupId, count: 1 }, accessToken);
+  if (!urlData?.upload_url) {
+    throw new Error('ОК не вернул upload_url — вероятно, нет доступа к группе');
+  }
 }
 
 // ─── Загрузка фото ────────────────────────────────────────────────────────────
@@ -173,4 +282,11 @@ async function sendOK(post) {
   }
 }
 
-module.exports = { sendOK };
+module.exports = {
+  sendOK,
+  checkRefreshTokenWarning,
+  getRefreshTokenStatus,
+  verifyOkAccess,
+  buildAuthorizeUrl,
+  exchangeCodeForTokens,
+};

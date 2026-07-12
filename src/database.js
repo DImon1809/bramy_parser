@@ -48,9 +48,11 @@ module.exports = {
       postedTg:    false,
       postedVk:    false,
       postedOk:    false,
+      postedZen:   false,
       tgMsgId:     null,
       vkPostId:    null,
       okPostId:    null,
+      zenUrl:      null,
     };
     persist();
     return true;
@@ -71,9 +73,11 @@ module.exports = {
       postedTg:    true,
       postedVk:    true,
       postedOk:    true,
+      postedZen:   true,
       tgMsgId:     null,
       vkPostId:    null,
       okPostId:    null,
+      zenUrl:      null,
     };
     persist();
     return true;
@@ -94,9 +98,11 @@ module.exports = {
       postedTg:     true,
       postedVk:     true,
       postedOk:     true,
+      postedZen:    true,
       tgMsgId:      null,
       vkPostId:     null,
       okPostId:     null,
+      zenUrl:       null,
       scrapeFailed: true,
     };
     persist();
@@ -107,18 +113,26 @@ module.exports = {
     return !!data.articles[url];
   },
 
-  markPosted(url, { tgMsgId = null, vkPostId = null, okPostId = null } = {}) {
+  markPosted(url, { tgMsgId = null, vkPostId = null, okPostId = null, zenUrl = null } = {}) {
     const art = data.articles[url];
     if (!art) return;
-    if (tgMsgId  != null) { art.postedTg = true;  art.tgMsgId  = tgMsgId;  }
-    if (vkPostId != null) { art.postedVk = true;   art.vkPostId = vkPostId; }
-    if (okPostId != null) { art.postedOk = true;   art.okPostId = okPostId; }
+    if (tgMsgId  != null) { art.postedTg  = true; art.tgMsgId  = tgMsgId;  }
+    if (vkPostId != null) { art.postedVk  = true; art.vkPostId = vkPostId; }
+    if (okPostId != null) { art.postedOk  = true; art.okPostId = okPostId; }
+    if (zenUrl   != null) { art.postedZen = true; art.zenUrl   = zenUrl;   }
     persist();
   },
 
   /** Возвращает статьи, не опубликованные хотя бы на одну платформу */
   getUnposted() {
-    return Object.values(data.articles).filter(a => !a.postedTg || !a.postedVk || !a.postedOk);
+    return Object.values(data.articles).filter(a => !a.postedTg || !a.postedVk || !a.postedOk || !a.postedZen);
+  },
+
+  /** Статьи, для которых ещё не готов черновик для Дзена — например, рерайт через ИИ
+   *  сорвался из-за сбоя сети. Используется, чтобы отложить попытку на следующий
+   *  прогон парсера, а не ронять публикацию сразу. */
+  getUnpostedZen() {
+    return Object.values(data.articles).filter(a => !a.postedZen && !a.scrapeFailed);
   },
 
   /** Возвращает самую свежую статью по дате публикации на сайте */
