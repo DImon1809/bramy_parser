@@ -88,72 +88,10 @@ async function sendTelegram(post, channelId = config.tg.channelId) {
 
 // ─── ВКонтакте ────────────────────────────────────────────────────────────────
 
-async function uploadPhotoVK(imageBuffer) {
-  const userToken = config.vk.userToken;
-  if (!userToken) throw new Error('VK_USER_TOKEN не задан');
-
-  // 1. Получаем адрес для загрузки (через пользовательский токен)
-  const serverRes = await axios.get(`https://api.vk.com/method/photos.getWallUploadServer`, {
-    params: {
-      group_id:     config.vk.groupId,
-      access_token: userToken,
-      v:            VK_V,
-    },
-  });
-
-  if (serverRes.data?.error) {
-    const e = serverRes.data.error;
-    throw new Error(`VK API ${e.error_code}: ${e.error_msg}`);
-  }
-
-  const uploadUrl = serverRes.data?.response?.upload_url;
-  if (!uploadUrl) throw new Error('VK: не удалось получить upload_url');
-
-  // 2. Загружаем буфер
-  const form = new FormData();
-  form.append('photo', imageBuffer, { filename: 'photo.jpg', contentType: 'image/jpeg' });
-
-  const uploadRes = await axios.post(uploadUrl, form, { headers: form.getHeaders() });
-  const { server, photo, hash } = uploadRes.data;
-
-  // 3. Сохраняем фото (через пользовательский токен)
-  const saveRes = await axios.get(`https://api.vk.com/method/photos.saveWallPhoto`, {
-    params: {
-      group_id:     config.vk.groupId,
-      server, photo, hash,
-      access_token: userToken,
-      v:            VK_V,
-    },
-  });
-
-  const saved = saveRes.data?.response?.[0];
-  if (!saved) throw new Error('VK: не удалось сохранить фото');
-
-  return `photo${saved.owner_id}_${saved.id}`;
-}
-
 async function sendVK(post) {
   if (!config.vk.token || !config.vk.groupId) {
     logger.warn('VK не настроен, пропускаем');
     return null;
-  }
-
-  let attachments;
-
-  if (post.imageData && config.vk.userToken) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        attachments = await uploadPhotoVK(post.imageData);
-        break;
-      } catch (e) {
-        if (attempt < 2) {
-          logger.warn(`VK: фото не загрузилось (попытка ${attempt}): ${e.message}. Повтор через 5с...`);
-          await new Promise(r => setTimeout(r, 5000));
-        } else {
-          logger.warn(`VK: не удалось загрузить фото — ${e.message}. Публикуем без картинки.`);
-        }
-      }
-    }
   }
 
   const body = new URLSearchParams({
@@ -163,7 +101,6 @@ async function sendVK(post) {
     access_token: config.vk.token,
     v:            VK_V,
   });
-  if (attachments) body.set('attachments', attachments);
 
   const MAX_ATTEMPTS = 6;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

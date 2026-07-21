@@ -1,3 +1,6 @@
+const logger = require('./logger');
+const { rewriteForVK } = require('./rewriter');
+
 const MAX_TG_CAPTION = 1024;
 const MAX_TG_TEXT    = 4096;
 const MAX_VK_TEXT    = 15000;
@@ -121,31 +124,40 @@ function formatTelegram(article) {
 
 // ─── ВКонтакте ────────────────────────────────────────────────────────────────
 
-function formatVK(article) {
-  const { title, text, url, section, imageUrl, imageData, articleType, publishedAt } = article;
+// Текстовый пост без фото. Заголовок и описание переписывает ИИ (см.
+// rewriteForVK в rewriter.js) строго на основе присланного текста — без
+// придуманных цен/характеристик/сроков/гарантий, таково требование заказчика.
+// Если рерайт недоступен (нет ключа/сбой OpenAI), используем исходный текст
+// с сайта как есть — это тоже фактически точно, просто без ИИ-обработки.
+async function formatVK(article) {
+  const { title, text, url, articleType } = article;
 
   const icon = typeIcon(articleType);
-  const desc = withParagraphs(text, 1500);
-  const date = formatDate(publishedAt);
   const tags = socialHashtags(article);
 
+  let headline = title;
+  let desc;
+  try {
+    const rewritten = await rewriteForVK(article);
+    headline = rewritten.title;
+    desc     = rewritten.text;
+  } catch (e) {
+    logger.warn(`VK: рерайт через ИИ не удался — публикуем исходный текст (${e.message})`);
+    desc = withParagraphs(text, 1500);
+  }
+
   const lines = [
-    `${icon} ${title}`,
+    `${icon} ${headline}`,
     '',
-    ...(section ? [`📂 ${section}`] : []),
-    ...(date    ? [`📅 ${date}`]    : []),
-    '',
-    ...(desc    ? [desc, '']        : []),
+    ...(desc ? [desc, ''] : []),
     `🌐 ${url}`,
     '',
     tags,
   ];
 
   return {
-    text:      truncate(lines.join('\n'), MAX_VK_TEXT),
-    url:       url       || null,
-    imageUrl:  imageUrl  || null,
-    imageData: imageData || null,
+    text: truncate(lines.join('\n'), MAX_VK_TEXT),
+    url:  url || null,
   };
 }
 

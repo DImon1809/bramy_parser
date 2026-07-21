@@ -62,7 +62,7 @@ async function publish(article) {
   logger.info(`Публикуем: "${article.title}" [${article.section}]`);
 
   const tgPost = formatTelegram(article);
-  const vkPost = formatVK(article);
+  const vkPost = await formatVK(article);
   const okPost = formatOK(article);
 
   let tgMsgId = null;
@@ -93,9 +93,7 @@ async function publish(article) {
   // ── ВКонтакте ── sendVK сам делает до 6 попыток с паузой между ними
   try {
     vkPostId = await sendVK(vkPost);
-    logger.info(
-      `  ✓ VK: post_id=${vkPostId}${vkPost.imageData ? " 🖼" : " 📝"}`,
-    );
+    logger.info(`  ✓ VK: post_id=${vkPostId} 📝`);
   } catch (e) {
     await logger.errorNotify(
       `Не удалось опубликовать в ВКонтакте: «${article.title}»`,

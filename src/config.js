@@ -14,7 +14,6 @@ module.exports = {
   },
   vk: {
     token: process.env.VK_TOKEN || "",
-    userToken: process.env.VK_USER_TOKEN || "",
     groupId: process.env.VK_GROUP_ID || "",
   },
   ok: {

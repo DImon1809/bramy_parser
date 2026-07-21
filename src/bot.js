@@ -237,7 +237,7 @@ async function onTestRun(chatId, cbId) {
     result.push(`ℹ️ ВКонтакте: уже опубликовано${vkUrl ? ` — <a href="${vkUrl}">открыть</a>` : ''}`);
   } else {
     try {
-      const vkPostId = await sendVK(formatVK(article));
+      const vkPostId = await sendVK(await formatVK(article));
       db.markPosted(latest.url, { vkPostId });
       const vkUrl = `https://vk.com/wall-${config.vk.groupId}_${vkPostId}`;
       result.push(`✅ ВКонтакте: опубликовано — <a href="${vkUrl}">открыть</a>`);
