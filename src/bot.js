@@ -6,8 +6,8 @@ const config = require('./config');
 const logger = require('./logger');
 const db     = require('./database');
 const { scrapeOneArticle } = require('./scraper');
-const { formatTelegram, formatVK, formatOK, formatZenDraft } = require('./formatter');
-const { sendTelegram, sendVK, sendOK }       = require('./publisher');
+const { formatTelegram, formatVK, formatOK, formatZenDraft, formatLiveJournal } = require('./formatter');
+const { sendTelegram, sendVK, sendOK, sendLiveJournal } = require('./publisher');
 const { rewriteArticle } = require('./rewriter');
 const { getRefreshTokenStatus, verifyOkAccess, buildAuthorizeUrl, exchangeCodeForTokens } = require('./ok');
 const { getAiBalance } = require('./aiBalance');
@@ -141,7 +141,7 @@ async function onStart(chatId) {
     '🎁 <b>Акции</b> — все акции',
     '🛒 <b>Магазин</b> — информация о новых товарах\n',
     `⏱ Проверяю каждые ${config.scraper.checkIntervalMinutes} мин`,
-    `📢 Публикую в Telegram, ВКонтакте, Одноклассники + черновики для Дзена`,
+    `📢 Публикую в Telegram, ВКонтакте, Одноклассники, LiveJournal + черновики для Дзена`,
   ].join('\n');
 
   await sendMsg(chatId, text, { reply_markup: mainKeyboard() });
@@ -258,6 +258,23 @@ async function onTestRun(chatId, cbId) {
       result.push(`✅ ОК: опубликовано — <a href="${okUrl}">открыть</a>`);
     } catch (e) {
       result.push(`❌ ОК: ошибка — ${e.message}`);
+    }
+  }
+
+  // ── LiveJournal ──
+  if (latest.postedLj) {
+    result.push(`ℹ️ LiveJournal: уже опубликовано${latest.ljUrl ? ` — <a href="${latest.ljUrl}">открыть</a>` : ''}`);
+  } else {
+    try {
+      const ljUrl = await sendLiveJournal(formatLiveJournal(article));
+      if (ljUrl) {
+        db.markPosted(latest.url, { ljUrl });
+        result.push(`✅ LiveJournal: опубликовано — <a href="${ljUrl}">открыть</a>`);
+      } else {
+        result.push('ℹ️ LiveJournal: пропущено (не настроен LJ_USERNAME/LJ_PASSWORD)');
+      }
+    } catch (e) {
+      result.push(`❌ LiveJournal: ошибка — ${e.message}`);
     }
   }
 

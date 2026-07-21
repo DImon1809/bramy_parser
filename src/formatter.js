@@ -234,4 +234,37 @@ function formatZenDraft(article, rewritten) {
   };
 }
 
-module.exports = { formatTelegram, formatVK, formatOK, formatZenDraft };
+// ─── LiveJournal ──────────────────────────────────────────────────────────────
+
+// В отличие от Telegram/VK/OK, LJ принимает произвольный HTML в теле поста —
+// картинка вставляется хотлинком (<img src="...">) без отдельной загрузки,
+// LJ сам её подтягивает при отображении записи.
+function formatLiveJournal(article) {
+  const { title, text, url, section, imageUrl, articleType, publishedAt } = article;
+
+  const icon = typeIcon(articleType);
+  const date = formatDate(publishedAt);
+  const meta = [section, date].filter(Boolean).join(' · ');
+  const tags = socialHashtags(article);
+
+  const paragraphs = withParagraphs(text, 3000)
+    .split('\n\n')
+    .filter(Boolean)
+    .map((p) => `<p>${p}</p>`)
+    .join('');
+
+  const event = [
+    imageUrl ? `<p><img src="${imageUrl}" /></p>` : '',
+    meta ? `<p><i>${meta}</i></p>` : '',
+    paragraphs,
+    `<p><a href="${url}">Читать на bramy.ru →</a></p>`,
+    `<p>${tags}</p>`,
+  ].join('');
+
+  return {
+    subject: `${icon} ${title}`,
+    event:   truncate(event, MAX_VK_TEXT),
+  };
+}
+
+module.exports = { formatTelegram, formatVK, formatOK, formatZenDraft, formatLiveJournal };

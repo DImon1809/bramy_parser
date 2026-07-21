@@ -10,8 +10,9 @@ const {
   formatVK,
   formatOK,
   formatZenDraft,
+  formatLiveJournal,
 } = require("./formatter");
-const { sendTelegram, sendVK, sendOK } = require("./publisher");
+const { sendTelegram, sendVK, sendOK, sendLiveJournal } = require("./publisher");
 const { rewriteArticle } = require("./rewriter");
 const { checkRefreshTokenWarning } = require("./ok");
 const { checkLowBalanceWarning } = require("./aiBalance");
@@ -64,10 +65,12 @@ async function publish(article) {
   const tgPost = formatTelegram(article);
   const vkPost = await formatVK(article);
   const okPost = formatOK(article);
+  const ljPost = formatLiveJournal(article);
 
   let tgMsgId = null;
   let vkPostId = null;
   let okPostId = null;
+  let ljUrl = null;
 
   // ── Telegram ── sendTelegram сам делает до 6 попыток с паузой между ними
   try {
@@ -112,7 +115,18 @@ async function publish(article) {
     );
   }
 
-  db.markPosted(article.url, { tgMsgId, vkPostId, okPostId });
+  // ── LiveJournal ── sendLiveJournal сам делает до 6 попыток с паузой между ними
+  try {
+    ljUrl = await sendLiveJournal(ljPost);
+    if (ljUrl) logger.info(`  ✓ LiveJournal: ${ljUrl}`);
+  } catch (e) {
+    await logger.errorNotify(
+      `Не удалось опубликовать в LiveJournal: «${article.title}»`,
+      e,
+    );
+  }
+
+  db.markPosted(article.url, { tgMsgId, vkPostId, okPostId, ljUrl });
 
   // ── Дзен ── независимо от остальных каналов. Рерайт через ИИ и отправка в
   // черновой канал зависят от внешних сервисов (OpenAI, Telegram) — при сбое

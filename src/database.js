@@ -49,10 +49,12 @@ module.exports = {
       postedVk:    false,
       postedOk:    false,
       postedZen:   false,
+      postedLj:    false,
       tgMsgId:     null,
       vkPostId:    null,
       okPostId:    null,
       zenUrl:      null,
+      ljUrl:       null,
     };
     persist();
     return true;
@@ -74,10 +76,12 @@ module.exports = {
       postedVk:    true,
       postedOk:    true,
       postedZen:   true,
+      postedLj:    true,
       tgMsgId:     null,
       vkPostId:    null,
       okPostId:    null,
       zenUrl:      null,
+      ljUrl:       null,
     };
     persist();
     return true;
@@ -99,10 +103,12 @@ module.exports = {
       postedVk:     true,
       postedOk:     true,
       postedZen:    true,
+      postedLj:     true,
       tgMsgId:      null,
       vkPostId:     null,
       okPostId:     null,
       zenUrl:       null,
+      ljUrl:        null,
       scrapeFailed: true,
     };
     persist();
@@ -113,19 +119,20 @@ module.exports = {
     return !!data.articles[url];
   },
 
-  markPosted(url, { tgMsgId = null, vkPostId = null, okPostId = null, zenUrl = null } = {}) {
+  markPosted(url, { tgMsgId = null, vkPostId = null, okPostId = null, zenUrl = null, ljUrl = null } = {}) {
     const art = data.articles[url];
     if (!art) return;
     if (tgMsgId  != null) { art.postedTg  = true; art.tgMsgId  = tgMsgId;  }
     if (vkPostId != null) { art.postedVk  = true; art.vkPostId = vkPostId; }
     if (okPostId != null) { art.postedOk  = true; art.okPostId = okPostId; }
     if (zenUrl   != null) { art.postedZen = true; art.zenUrl   = zenUrl;   }
+    if (ljUrl    != null) { art.postedLj  = true; art.ljUrl    = ljUrl;    }
     persist();
   },
 
   /** Возвращает статьи, не опубликованные хотя бы на одну платформу */
   getUnposted() {
-    return Object.values(data.articles).filter(a => !a.postedTg || !a.postedVk || !a.postedOk || !a.postedZen);
+    return Object.values(data.articles).filter(a => !a.postedTg || !a.postedVk || !a.postedOk || !a.postedZen || !a.postedLj);
   },
 
   /** Статьи, для которых ещё не готов черновик для Дзена — например, рерайт через ИИ

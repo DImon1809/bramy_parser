@@ -24,6 +24,14 @@ module.exports = {
     redirectUri: process.env.OK_REDIRECT_URI || "",
     tokenPath: require("path").join(__dirname, "../../data/ok-token.json"),
   },
+  lj: {
+    username: process.env.LJ_USERNAME || "",
+    password: process.env.LJ_PASSWORD || "",
+    // Имя сообщества (без "https://"), например "bramyru" — если не задано,
+    // публикация идёт в личный журнал аккаунта из LJ_USERNAME
+    community: process.env.LJ_COMMUNITY || "",
+    server: "https://www.livejournal.com/interface/xmlrpc",
+  },
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     baseURL: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
