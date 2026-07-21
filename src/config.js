@@ -24,6 +24,16 @@ module.exports = {
     redirectUri: process.env.OK_REDIRECT_URI || "",
     tokenPath: require("path").join(__dirname, "../../data/ok-token.json"),
   },
+  pinterest: {
+    clientId: process.env.PINTEREST_CLIENT_ID || "",
+    clientSecret: process.env.PINTEREST_CLIENT_SECRET || "",
+    boardId: process.env.PINTEREST_BOARD_ID || "",
+    redirectUri: process.env.PINTEREST_REDIRECT_URI || "",
+    tokenPath: require("path").join(
+      __dirname,
+      "../../data/pinterest-token.json",
+    ),
+  },
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     baseURL: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",

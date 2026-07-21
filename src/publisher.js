@@ -3,6 +3,7 @@ const FormData = require('form-data');
 const config = require('./config');
 const logger = require('./logger');
 const { sendOK } = require('./ok');
+const { sendPinterest } = require('./pinterest');
 
 const VK_V = '5.199';
 
@@ -128,4 +129,4 @@ async function sendVK(post) {
   }
 }
 
-module.exports = { sendTelegram, sendVK, sendOK };
+module.exports = { sendTelegram, sendVK, sendOK, sendPinterest };

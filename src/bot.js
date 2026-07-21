@@ -6,10 +6,16 @@ const config = require('./config');
 const logger = require('./logger');
 const db     = require('./database');
 const { scrapeOneArticle } = require('./scraper');
-const { formatTelegram, formatVK, formatOK, formatZenDraft } = require('./formatter');
-const { sendTelegram, sendVK, sendOK }       = require('./publisher');
+const { formatTelegram, formatVK, formatOK, formatPinterest, formatZenDraft } = require('./formatter');
+const { sendTelegram, sendVK, sendOK, sendPinterest } = require('./publisher');
 const { rewriteArticle } = require('./rewriter');
 const { getRefreshTokenStatus, verifyOkAccess, buildAuthorizeUrl, exchangeCodeForTokens } = require('./ok');
+const {
+  getRefreshTokenStatus:  getPinterestRefreshTokenStatus,
+  verifyPinterestAccess,
+  buildAuthorizeUrl:      buildPinterestAuthorizeUrl,
+  exchangeCodeForTokens:  exchangePinterestCodeForTokens,
+} = require('./pinterest');
 const { getAiBalance } = require('./aiBalance');
 
 const TOKEN   = config.tg.botToken;
@@ -20,9 +26,9 @@ const BASE    = `https://api.telegram.org/bot${TOKEN}`;
 let lastRunAt  = null;
 let isRunning  = false;
 
-// Ждём code от ОК после нажатия "🔗 Перелогиниться в ОК" — единственный вид
-// многошагового диалога в боте.
-const pending = new Map(); // chatId -> { action: 'awaiting_ok_code' }
+// Ждём code от ОК или Pinterest после соответствующей кнопки "🔗 Перелогиниться" —
+// единственный вид многошагового диалога в боте.
+const pending = new Map(); // chatId -> { action: 'awaiting_ok_code' | 'awaiting_pinterest_code' }
 
 function setLastRun()       { lastRunAt = new Date(); }
 function setRunning(val)    { isRunning = val; }
@@ -64,6 +70,10 @@ function mainKeyboard() {
       [
         { text: '🔑 Токен ОК',              callback_data: 'ok_token_status' },
         { text: '🔗 Перелогиниться в ОК',   callback_data: 'ok_login_start' },
+      ],
+      [
+        { text: '🔑 Токен Pinterest',            callback_data: 'pinterest_token_status' },
+        { text: '🔗 Перелогиниться в Pinterest', callback_data: 'pinterest_login_start' },
       ],
       [
         { text: '💰 Баланс ИИ', callback_data: 'ai_balance_status' },
@@ -141,7 +151,7 @@ async function onStart(chatId) {
     '🎁 <b>Акции</b> — все акции',
     '🛒 <b>Магазин</b> — информация о новых товарах\n',
     `⏱ Проверяю каждые ${config.scraper.checkIntervalMinutes} мин`,
-    `📢 Публикую в Telegram, ВКонтакте, Одноклассники + черновики для Дзена`,
+    `📢 Публикую в Telegram, ВКонтакте, Одноклассники, Pinterest + черновики для Дзена`,
   ].join('\n');
 
   await sendMsg(chatId, text, { reply_markup: mainKeyboard() });
@@ -261,6 +271,26 @@ async function onTestRun(chatId, cbId) {
     }
   }
 
+  // ── Pinterest ──
+  if (latest.postedPinterest) {
+    const pinUrl = latest.pinterestPostId ? `https://www.pinterest.com/pin/${latest.pinterestPostId}/` : '';
+    result.push(`ℹ️ Pinterest: уже опубликовано${pinUrl ? ` — <a href="${pinUrl}">открыть</a>` : ''}`);
+  } else {
+    const pinterestPost = formatPinterest(article);
+    if (!pinterestPost) {
+      result.push('ℹ️ Pinterest: пропущено (нет изображения)');
+    } else {
+      try {
+        const pinterestPostId = await sendPinterest(pinterestPost);
+        db.markPosted(latest.url, { pinterestPostId });
+        const pinUrl = `https://www.pinterest.com/pin/${pinterestPostId}/`;
+        result.push(`✅ Pinterest: опубликовано — <a href="${pinUrl}">открыть</a>`);
+      } catch (e) {
+        result.push(`❌ Pinterest: ошибка — ${e.message}`);
+      }
+    }
+  }
+
   // ── Дзен (черновик в резервный канал) ──
   if (latest.postedZen) {
     result.push(`ℹ️ Дзен: уже опубликовано${latest.zenUrl ? ` — <a href="${latest.zenUrl}">открыть</a>` : ''}`);
@@ -364,7 +394,8 @@ async function onCancelPending(chatId, cbId) {
 
 // Принимает и "голый" code, и целиком вставленный адрес из адресной строки
 // (?code=... или &code=...) — так меньше шанс ошибиться при копировании.
-function extractOkCode(text) {
+// Общая функция для ОК и Pinterest — у обоих одинаковый формат code в redirect_uri.
+function extractAuthCode(text) {
   const trimmed = text.trim();
   const match = trimmed.match(/[?&]code=([^&\s]+)/);
   return match ? decodeURIComponent(match[1]) : trimmed;
@@ -377,7 +408,7 @@ function extractOkCode(text) {
 // ОК (verifyOkAccess) — если доступа к группе нет, файл НЕ перезаписывается,
 // старый рабочий токен остаётся на месте.
 async function onOkCodeText(chatId, text) {
-  const code = extractOkCode(text);
+  const code = extractAuthCode(text);
   if (!code) {
     await sendMsg(chatId, '❌ Пустое значение. Пришли code из адресной строки или нажми «Отмена».', { reply_markup: cancelKeyboard() });
     return;
@@ -423,6 +454,93 @@ async function onOkCodeText(chatId, text) {
     await sendMsg(chatId, '✅ Авторизация прошла, доступ к группе есть — токены сохранены.\n\nЧтобы изменения подхватились — перезапусти процесс.', restartPrompt());
   } catch (e) {
     logger.warn(`Бот: не удалось сохранить ok-token.json: ${e.stack || e.message}`);
+    await sendMsg(chatId, `⚠️ Токены рабочие, но не удалось сохранить файл: ${e.message}`, { reply_markup: cancelKeyboard() });
+  }
+}
+
+// ─── Токен Pinterest ───────────────────────────────────────────────────────
+
+async function onPinterestTokenStatus(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId });
+
+  const status = getPinterestRefreshTokenStatus();
+  let text;
+  if (!status) {
+    text = '⚠️ Токен Pinterest не найден — нужна первичная авторизация: нажми «🔗 Перелогиниться в Pinterest».';
+  } else if (status.daysRemaining > 0) {
+    text = `🔑 Токен Pinterest: осталось примерно <b>${status.daysRemaining} дн.</b>\nИстечёт ориентировочно ${formatDateShort(status.expiresAt)}`;
+  } else {
+    text = `⚠️ Токен Pinterest уже должен был истечь (ориентировочно ${formatDateShort(status.expiresAt)}) — пора обновить.`;
+  }
+
+  await sendMsg(chatId, text, { reply_markup: mainKeyboard() });
+}
+
+async function onPinterestLoginStart(chatId, cbId) {
+  await api('answerCallbackQuery', { callback_query_id: cbId });
+  pending.set(chatId, { action: 'awaiting_pinterest_code' });
+
+  const text = [
+    '🔗 <b>Вход в Pinterest</b>\n',
+    '1) Открой эту ссылку в браузере под аккаунтом, у которого есть доступ к нужной доске:\n',
+    buildPinterestAuthorizeUrl(),
+    '\n2) После входа и подтверждения браузер перейдёт на',
+    `   <code>${config.pinterest.redirectUri}?code=...</code>`,
+    '   (страница не обязана существовать — code просто появится в адресной строке)',
+    '\n3) Скопируй значение <code>code</code> и пришли сюда текстом',
+    '   — можно вставить и весь адрес из строки браузера целиком, я сам найду code в нём.',
+  ].join('\n');
+
+  await sendMsg(chatId, text, { reply_markup: cancelKeyboard() });
+}
+
+// Принимает code, пока чат находится в режиме awaiting_pinterest_code (после
+// "🔗 Перелогиниться в Pinterest"). При сбое НЕ выходит из режима — можно
+// прислать новый code (или получить свежую ссылку той же кнопкой) либо
+// нажать "❌ Отмена". Перед сохранением новый токен проверяется живым
+// запросом к API Pinterest (verifyPinterestAccess) — если доступа к доске
+// нет, файл НЕ перезаписывается, старый рабочий токен остаётся на месте.
+async function onPinterestCodeText(chatId, text) {
+  const code = extractAuthCode(text);
+  if (!code) {
+    await sendMsg(chatId, '❌ Пустое значение. Пришли code из адресной строки или нажми «Отмена».', { reply_markup: cancelKeyboard() });
+    return;
+  }
+
+  await sendMsg(chatId, '🔄 Обмениваю code на токены...');
+
+  let tokens;
+  try {
+    tokens = await exchangePinterestCodeForTokens(code);
+  } catch (e) {
+    await sendMsg(
+      chatId,
+      `❌ Не удалось обменять code: ${e.message}\n\ncode мог истечь — нажми «🔗 Перелогиниться в Pinterest» ещё раз для новой ссылки или «Отмена».`,
+      { reply_markup: cancelKeyboard() },
+    );
+    return;
+  }
+
+  await sendMsg(chatId, '🔍 Проверяю доступ к доске...');
+
+  try {
+    await verifyPinterestAccess(tokens.accessToken);
+  } catch (e) {
+    await sendMsg(
+      chatId,
+      `⚠️ Токены получены, но проверка доступа не прошла: ${e.message}\n\nВозможно, у аккаунта нет доступа к настроенной доске. Токены НЕ сохранены. Нажми «Отмена» или попробуй заново.`,
+      { reply_markup: cancelKeyboard() },
+    );
+    return;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(config.pinterest.tokenPath), { recursive: true });
+    fs.writeFileSync(config.pinterest.tokenPath, JSON.stringify(tokens, null, 2), 'utf8');
+    pending.delete(chatId);
+    await sendMsg(chatId, '✅ Авторизация прошла, доступ к доске есть — токены сохранены.\n\nЧтобы изменения подхватились — перезапусти процесс.', restartPrompt());
+  } catch (e) {
+    logger.warn(`Бот: не удалось сохранить pinterest-token.json: ${e.stack || e.message}`);
     await sendMsg(chatId, `⚠️ Токены рабочие, но не удалось сохранить файл: ${e.message}`, { reply_markup: cancelKeyboard() });
   }
 }
@@ -485,11 +603,15 @@ async function handleUpdate(update) {
     return;
   }
 
-  // Code от ОК, которого бот ждёт после "🔗 Перелогиниться в ОК"
+  // Code от ОК/Pinterest, которого бот ждёт после соответствующей кнопки "🔗 Перелогиниться"
   if (update.message?.text) {
     const p = pending.get(chatId);
     if (p?.action === 'awaiting_ok_code') {
       await onOkCodeText(chatId, update.message.text);
+      return;
+    }
+    if (p?.action === 'awaiting_pinterest_code') {
+      await onPinterestCodeText(chatId, update.message.text);
       return;
     }
   }
@@ -503,6 +625,8 @@ async function handleUpdate(update) {
     if (cb.data === 'restart_cancel')  await onRestartCancel(chatId, cb.id);
     if (cb.data === 'ok_token_status')    await onOkTokenStatus(chatId, cb.id);
     if (cb.data === 'ok_login_start')     await onOkLoginStart(chatId, cb.id);
+    if (cb.data === 'pinterest_token_status') await onPinterestTokenStatus(chatId, cb.id);
+    if (cb.data === 'pinterest_login_start')  await onPinterestLoginStart(chatId, cb.id);
     if (cb.data === 'ai_balance_status')  await onAiBalanceStatus(chatId, cb.id);
     if (cb.data === 'cancel_pending')     await onCancelPending(chatId, cb.id);
   }

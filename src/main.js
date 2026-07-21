@@ -9,11 +9,15 @@ const {
   formatTelegram,
   formatVK,
   formatOK,
+  formatPinterest,
   formatZenDraft,
 } = require("./formatter");
-const { sendTelegram, sendVK, sendOK } = require("./publisher");
+const { sendTelegram, sendVK, sendOK, sendPinterest } = require("./publisher");
 const { rewriteArticle } = require("./rewriter");
 const { checkRefreshTokenWarning } = require("./ok");
+const {
+  checkRefreshTokenWarning: checkPinterestRefreshTokenWarning,
+} = require("./pinterest");
 const { checkLowBalanceWarning } = require("./aiBalance");
 const bot = require("./bot");
 
@@ -64,10 +68,12 @@ async function publish(article) {
   const tgPost = formatTelegram(article);
   const vkPost = await formatVK(article);
   const okPost = formatOK(article);
+  const pinterestPost = formatPinterest(article);
 
   let tgMsgId = null;
   let vkPostId = null;
   let okPostId = null;
+  let pinterestPostId = null;
 
   // ── Telegram ── sendTelegram сам делает до 6 попыток с паузой между ними
   try {
@@ -112,7 +118,24 @@ async function publish(article) {
     );
   }
 
-  db.markPosted(article.url, { tgMsgId, vkPostId, okPostId });
+  // ── Pinterest ── formatPinterest() возвращает null для статей без картинки
+  // (Pinterest в принципе не публикует пины без фото) — это штатный пропуск,
+  // а не ошибка.
+  if (pinterestPost) {
+    try {
+      pinterestPostId = await sendPinterest(pinterestPost);
+      logger.info(`  ✓ Pinterest: id=${pinterestPostId} 🖼`);
+    } catch (e) {
+      await logger.errorNotify(
+        `Не удалось опубликовать в Pinterest: «${article.title}»`,
+        e,
+      );
+    }
+  } else {
+    logger.info("  ⏭ Pinterest: пропущено (нет изображения)");
+  }
+
+  db.markPosted(article.url, { tgMsgId, vkPostId, okPostId, pinterestPostId });
 
   // ── Дзен ── независимо от остальных каналов. Рерайт через ИИ и отправка в
   // черновой канал зависят от внешних сервисов (OpenAI, Telegram) — при сбое
@@ -226,6 +249,16 @@ async function run() {
     await logger.errorNotify(
       `ОК: refresh_token истекает примерно через ${okWarning.daysRemaining} дн. ` +
         `Нажми «🔗 Перелогиниться в ОК» в этом боте, чтобы обновить его.`,
+    );
+  }
+
+  // Аналогичная ежедневная проверка (не чаще раза в сутки) для refresh_token
+  // Pinterest — токен там живёт дольше, чем у ОК, но подход тот же
+  const pinterestWarning = checkPinterestRefreshTokenWarning();
+  if (pinterestWarning) {
+    await logger.errorNotify(
+      `Pinterest: refresh_token истекает примерно через ${pinterestWarning.daysRemaining} дн. ` +
+        `Нажми «🔗 Перелогиниться в Pinterest» в этом боте, чтобы обновить его.`,
     );
   }
 

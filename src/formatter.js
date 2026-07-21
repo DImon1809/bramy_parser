@@ -190,6 +190,31 @@ function formatOK(article) {
   };
 }
 
+// ─── Pinterest ────────────────────────────────────────────────────────────────
+
+const MAX_PINTEREST_TITLE = 100;
+const MAX_PINTEREST_DESC  = 500;
+
+// Pinterest принципиально не публикует пины без картинки. Если у статьи её
+// нет — возвращаем null, и sendPinterest() в publisher.js штатно пропускает
+// платформу для этой статьи (заказчик решил не подставлять логотип вместо
+// настоящей фотографии статьи).
+function formatPinterest(article) {
+  const { title, text, url, imageUrl, imageData, articleType } = article;
+  if (!imageUrl && !imageData) return null;
+
+  const icon = typeIcon(articleType);
+  const tags = socialHashtags(article);
+
+  return {
+    title:       truncate(`${icon} ${title}`, MAX_PINTEREST_TITLE),
+    description: truncate(`${shortDescription(text, 400)}\n\n${tags}`, MAX_PINTEREST_DESC),
+    link:        url,
+    imageUrl:    imageUrl  || null,
+    imageData:   imageData || null,
+  };
+}
+
 // ─── Черновик для Дзена (резервный Telegram-канал) ────────────────────────────
 
 // Сознательно без эмодзи-иконки и строки "📂 раздел · 📅 дата" — эти элементы
@@ -234,4 +259,4 @@ function formatZenDraft(article, rewritten) {
   };
 }
 
-module.exports = { formatTelegram, formatVK, formatOK, formatZenDraft };
+module.exports = { formatTelegram, formatVK, formatOK, formatPinterest, formatZenDraft };

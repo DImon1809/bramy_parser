@@ -48,10 +48,12 @@ module.exports = {
       postedTg:    false,
       postedVk:    false,
       postedOk:    false,
+      postedPinterest: false,
       postedZen:   false,
       tgMsgId:     null,
       vkPostId:    null,
       okPostId:    null,
+      pinterestPostId: null,
       zenUrl:      null,
     };
     persist();
@@ -73,10 +75,12 @@ module.exports = {
       postedTg:    true,
       postedVk:    true,
       postedOk:    true,
+      postedPinterest: true,
       postedZen:   true,
       tgMsgId:     null,
       vkPostId:    null,
       okPostId:    null,
+      pinterestPostId: null,
       zenUrl:      null,
     };
     persist();
@@ -98,10 +102,12 @@ module.exports = {
       postedTg:     true,
       postedVk:     true,
       postedOk:     true,
+      postedPinterest: true,
       postedZen:    true,
       tgMsgId:      null,
       vkPostId:     null,
       okPostId:     null,
+      pinterestPostId: null,
       zenUrl:       null,
       scrapeFailed: true,
     };
@@ -113,12 +119,13 @@ module.exports = {
     return !!data.articles[url];
   },
 
-  markPosted(url, { tgMsgId = null, vkPostId = null, okPostId = null, zenUrl = null } = {}) {
+  markPosted(url, { tgMsgId = null, vkPostId = null, okPostId = null, pinterestPostId = null, zenUrl = null } = {}) {
     const art = data.articles[url];
     if (!art) return;
     if (tgMsgId  != null) { art.postedTg  = true; art.tgMsgId  = tgMsgId;  }
     if (vkPostId != null) { art.postedVk  = true; art.vkPostId = vkPostId; }
     if (okPostId != null) { art.postedOk  = true; art.okPostId = okPostId; }
+    if (pinterestPostId != null) { art.postedPinterest = true; art.pinterestPostId = pinterestPostId; }
     if (zenUrl   != null) { art.postedZen = true; art.zenUrl   = zenUrl;   }
     persist();
   },
